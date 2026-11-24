@@ -258,10 +258,12 @@ export async function getServiceRecordById(id) {
 }
 
 export async function createServiceRecord(data) {
+  const generatedNo = data.invoiceNo || data.serviceNo || `INV-N${Math.floor(8000 + Math.random() * 1999)}`;
   const cleanData = {
     ...data,
     vehicleNo: data.vehicleNo.trim().toUpperCase(),
-    invoiceNo: data.invoiceNo || `INV-N${Math.floor(8000 + Math.random() * 1999)}`,
+    invoiceNo: generatedNo,
+    serviceNo: data.serviceNo || generatedNo,
     serviceDate: data.serviceDate || new Date().toISOString().split('T')[0],
     serviceTime: data.serviceTime || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     meterReading: Number(data.meterReading) || 0,

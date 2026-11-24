@@ -1,7 +1,7 @@
 import './globals.css';
 
 export const metadata = {
-  title: 'Auto Care Service Center - Akuressa | Vehicle Registration, Service & Supplier Tracker',
+  title: 'AUTO CARE SERVICE CENTER',
   description: 'Auto Care Service Center, No 146, Deniyaya Road, Akuressa. Reg No: 7/3594. Tel: +94 412283131, +94 704909320. Email: lakshanwasindu@gmail.com',
 };
 

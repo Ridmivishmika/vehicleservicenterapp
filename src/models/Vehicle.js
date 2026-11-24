@@ -10,6 +10,7 @@ const VehicleSchema = new mongoose.Schema(
     mobileTel: { type: String, default: '', trim: true },
     homeTel: { type: String, default: '', trim: true },
     officeTel: { type: String, default: '', trim: true },
+    email: { type: String, default: '', trim: true, lowercase: true },
     city: { type: String, default: 'Colombo', trim: true },
     csStatus: { type: String, default: 'Regular', trim: true },
     vType: { type: String, default: 'Car', trim: true },
