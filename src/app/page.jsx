@@ -48,7 +48,8 @@ import {
   Lock,
   LogOut,
   EyeOff,
-  RotateCcw
+  RotateCcw,
+  Home
 } from 'lucide-react';
 
 // Standard Service Package Definitions (Inspection & Service Checklist Options)
@@ -147,6 +148,8 @@ export default function ServiceCenterApp() {
   // Dummy Login State
   const [authChecked, setAuthChecked] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [showLoginModal, setShowLoginModal] = useState(false);
+  const [pendingAction, setPendingAction] = useState(null);
   const [loginUsername, setLoginUsername] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [showLoginPassword, setShowLoginPassword] = useState(false);
@@ -164,6 +167,16 @@ export default function ServiceCenterApp() {
     }
   }, []);
 
+  const requireAuth = (action) => {
+    if (isLoggedIn) {
+      if (typeof action === 'function') action();
+    } else {
+      setPendingAction(() => (typeof action === 'function' ? action : null));
+      setLoginError('');
+      setShowLoginModal(true);
+    }
+  };
+
   const handleDummyLogin = (e) => {
     e.preventDefault();
     if (loginUsername.trim().toLowerCase() === 'admin' && loginPassword === '1234') {
@@ -174,6 +187,12 @@ export default function ServiceCenterApp() {
       }
       setLoginError('');
       setIsLoggedIn(true);
+      setShowLoginModal(false);
+      if (typeof pendingAction === 'function') {
+        const nextAction = pendingAction;
+        setPendingAction(null);
+        nextAction();
+      }
     } else {
       setLoginError('Invalid username or password. Use admin / 1234.');
     }
@@ -186,12 +205,15 @@ export default function ServiceCenterApp() {
       // ignore storage errors
     }
     setIsLoggedIn(false);
+    setPendingAction(null);
+    setShowLoginModal(false);
+    setActiveTab('Home');
     setLoginPassword('');
     setLoginError('');
   };
 
-  // Navigation Tabs: Only 4 Main Tabs (Vehicle Registration | Service | Suppliers | Expenses)
-  const [activeTab, setActiveTab] = useState('Cs/Vehicle');
+  // Navigation Tabs: Home | Vehicle | Suppliers | Expenses | Job
+  const [activeTab, setActiveTab] = useState('Home');
   const [expenseSubTab, setExpenseSubTab] = useState('expenses'); // 'expenses' | 'pay_today' | 'analysis'
   const [dbStatus, setDbStatus] = useState({ connected: false, mode: 'Checking...', uriMasked: '', host: '', name: '' });
   const [showDbConfigModal, setShowDbConfigModal] = useState(false);
@@ -2626,98 +2648,112 @@ export default function ServiceCenterApp() {
     );
   }
 
-  if (!isLoggedIn) {
-    return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center px-4 py-8">
-        <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
-          <div className="bg-slate-950 text-white px-6 py-5 flex items-center gap-3 border-b border-slate-800">
-            <div className="bg-blue-600 p-2.5 rounded-xl shadow-md shadow-blue-500/20">
-              <Wrench className="w-5 h-5" />
-            </div>
-            <div>
-              <h1 className="text-base font-black tracking-wider uppercase">AUTO CARE SERVICE CENTER</h1>
-              <p className="text-[11px] text-slate-400">Sign in to access the service center system</p>
-            </div>
-          </div>
-
-          <form onSubmit={handleDummyLogin} className="p-6 space-y-4 text-xs">
-            {loginError && (
-              <div className="bg-rose-50 border border-rose-200 text-rose-700 px-3 py-2 rounded-lg font-semibold flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 shrink-0" />
-                <span>{loginError}</span>
-              </div>
-            )}
-
-            <div>
-              <label className="block font-bold text-slate-700 mb-1">Username</label>
-              <div className="relative">
-                <User className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                <input
-                  type="text"
-                  value={loginUsername}
-                  onChange={(e) => setLoginUsername(e.target.value)}
-                  placeholder="Enter username (admin)"
-                  className="w-full bg-slate-50 border border-slate-300 rounded-lg pl-9 pr-3 py-2.5 text-sm text-slate-900 font-semibold outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white"
-                  required
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block font-bold text-slate-700 mb-1">Password</label>
-              <div className="relative">
-                <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                <input
-                  type={showLoginPassword ? 'text' : 'password'}
-                  value={loginPassword}
-                  onChange={(e) => setLoginPassword(e.target.value)}
-                  placeholder="Enter password (1234)"
-                  className="w-full bg-slate-50 border border-slate-300 rounded-lg pl-9 pr-9 py-2.5 text-sm text-slate-900 font-semibold outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white"
-                  required
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowLoginPassword((prev) => !prev)}
-                  className="text-slate-400 hover:text-slate-700 absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer"
-                  title={showLoginPassword ? 'Hide password' : 'Show password'}
-                >
-                  {showLoginPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              </div>
-            </div>
-
-            <button
-              type="submit"
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded-lg text-sm transition shadow-sm cursor-pointer"
-            >
-              Sign In
-            </button>
-
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 flex items-center justify-between gap-2">
-              <div className="text-[11px] text-blue-900">
-                <div><span className="font-semibold">Demo Username:</span> <code className="font-mono font-bold">admin</code></div>
-                <div><span className="font-semibold">Demo Password:</span> <code className="font-mono font-bold">1234</code></div>
+  return (
+    <div className="min-h-screen bg-slate-100 text-slate-800 pb-20 overflow-x-hidden">
+      {/* Login Modal (triggered when accessing protected tabs/actions while logged out) */}
+      {showLoginModal && !isLoggedIn && (
+        <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-xs flex items-center justify-center px-4 py-8">
+          <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
+            <div className="bg-slate-950 text-white px-6 py-5 flex items-center justify-between gap-3 border-b border-slate-800">
+              <div className="flex items-center gap-3">
+                <div className="bg-blue-600 p-2.5 rounded-xl shadow-md shadow-blue-500/20">
+                  <Wrench className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="text-base font-black tracking-wider uppercase">AUTO CARE SERVICE CENTER</h2>
+                  <p className="text-[11px] text-slate-400">Sign in to access this section</p>
+                </div>
               </div>
               <button
                 type="button"
                 onClick={() => {
-                  setLoginUsername('admin');
-                  setLoginPassword('1234');
+                  setShowLoginModal(false);
+                  setPendingAction(null);
                   setLoginError('');
                 }}
-                className="bg-white hover:bg-blue-100 text-blue-700 border border-blue-300 font-bold px-2.5 py-1.5 rounded text-[11px] cursor-pointer shrink-0"
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition cursor-pointer"
+                title="Close"
               >
-                Fill Demo
+                <X className="w-4 h-4" />
               </button>
             </div>
-          </form>
-        </div>
-      </div>
-    );
-  }
 
-  return (
-    <div className="min-h-screen bg-slate-100 text-slate-800 pb-20 overflow-x-hidden">
+            <form onSubmit={handleDummyLogin} className="p-6 space-y-4 text-xs">
+              {loginError && (
+                <div className="bg-rose-50 border border-rose-200 text-rose-700 px-3 py-2 rounded-lg font-semibold flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{loginError}</span>
+                </div>
+              )}
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Username</label>
+                <div className="relative">
+                  <User className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={loginUsername}
+                    onChange={(e) => setLoginUsername(e.target.value)}
+                    placeholder="Enter username (admin)"
+                    className="w-full bg-slate-50 border border-slate-300 rounded-lg pl-9 pr-3 py-2.5 text-sm text-slate-900 font-semibold outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white"
+                    required
+                    autoFocus
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Password</label>
+                <div className="relative">
+                  <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type={showLoginPassword ? 'text' : 'password'}
+                    value={loginPassword}
+                    onChange={(e) => setLoginPassword(e.target.value)}
+                    placeholder="Enter password (1234)"
+                    className="w-full bg-slate-50 border border-slate-300 rounded-lg pl-9 pr-9 py-2.5 text-sm text-slate-900 font-semibold outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white"
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowLoginPassword((prev) => !prev)}
+                    className="text-slate-400 hover:text-slate-700 absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer"
+                    title={showLoginPassword ? 'Hide password' : 'Show password'}
+                  >
+                    {showLoginPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded-lg text-sm transition shadow-sm cursor-pointer"
+              >
+                Sign In
+              </button>
+
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 flex items-center justify-between gap-2">
+                <div className="text-[11px] text-blue-900">
+                  <div><span className="font-semibold">Demo Username:</span> <code className="font-mono font-bold">admin</code></div>
+                  <div><span className="font-semibold">Demo Password:</span> <code className="font-mono font-bold">1234</code></div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLoginUsername('admin');
+                    setLoginPassword('1234');
+                    setLoginError('');
+                  }}
+                  className="bg-white hover:bg-blue-100 text-blue-700 border border-blue-300 font-bold px-2.5 py-1.5 rounded text-[11px] cursor-pointer shrink-0"
+                >
+                  Fill Demo
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Top Application Header */}
       <header className="bg-slate-900 text-white shadow-md border-b border-slate-800 sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-3 sm:px-4 py-2.5 sm:py-3 flex flex-wrap items-center justify-between gap-2 sm:gap-3">
@@ -2731,65 +2767,89 @@ export default function ServiceCenterApp() {
             </h1>
           </div>
 
-          {/* Online/Offline Status, Pending Queue & Sync Now */}
+          {/* Online/Offline Status, Pending Queue & Sync Now (or Login when signed out) */}
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setShowDbConfigModal(true)}
-              title="Database Connection Settings"
-              className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold flex items-center gap-1.5 border transition cursor-pointer ${dbStatus.connected
-                ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300 hover:bg-emerald-900/60'
-                : 'bg-amber-950/60 border-amber-500/40 text-amber-300 hover:bg-amber-900/60'
-                }`}
-            >
-              <span className={`w-2 h-2 rounded-full ${dbStatus.connected ? 'bg-emerald-400' : 'bg-amber-400'}`}></span>
-              <span>{dbStatus.connected ? 'ONLINE' : 'OFFLINE CACHE'}</span>
-              {syncStatus.pendingCount > 0 && (
-                <span className="ml-1 bg-amber-500 text-slate-950 px-1.5 py-0.5 rounded font-black text-[10px]">
-                  {syncStatus.pendingCount} pending
-                </span>
-              )}
-            </button>
+            {isLoggedIn ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setShowDbConfigModal(true)}
+                  title="Database Connection Settings"
+                  className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold flex items-center gap-1.5 border transition cursor-pointer ${dbStatus.connected
+                    ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300 hover:bg-emerald-900/60'
+                    : 'bg-amber-950/60 border-amber-500/40 text-amber-300 hover:bg-amber-900/60'
+                    }`}
+                >
+                  <span className={`w-2 h-2 rounded-full ${dbStatus.connected ? 'bg-emerald-400' : 'bg-amber-400'}`}></span>
+                  <span>{dbStatus.connected ? 'ONLINE' : 'OFFLINE CACHE'}</span>
+                  {syncStatus.pendingCount > 0 && (
+                    <span className="ml-1 bg-amber-500 text-slate-950 px-1.5 py-0.5 rounded font-black text-[10px]">
+                      {syncStatus.pendingCount} pending
+                    </span>
+                  )}
+                </button>
 
-            <button
-              type="button"
-              onClick={() => handleSyncNow(false)}
-              disabled={syncStatus.syncing}
-              title={syncStatus.lastSyncedAt ? `Last synced: ${new Date(syncStatus.lastSyncedAt).toLocaleString()}` : 'Push offline changes & pull online updates'}
-              className="bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white px-3 py-1.5 rounded-lg text-[11px] font-bold flex items-center gap-1.5 transition cursor-pointer shadow-xs"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${syncStatus.syncing ? 'animate-spin' : ''}`} />
-              <span>{syncStatus.syncing ? 'Syncing...' : 'Sync Now'}</span>
-            </button>
+                <button
+                  type="button"
+                  onClick={() => handleSyncNow(false)}
+                  disabled={syncStatus.syncing}
+                  title={syncStatus.lastSyncedAt ? `Last synced: ${new Date(syncStatus.lastSyncedAt).toLocaleString()}` : 'Push offline changes & pull online updates'}
+                  className="bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white px-3 py-1.5 rounded-lg text-[11px] font-bold flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${syncStatus.syncing ? 'animate-spin' : ''}`} />
+                  <span>{syncStatus.syncing ? 'Syncing...' : 'Sync Now'}</span>
+                </button>
 
-            <button
-              type="button"
-              onClick={handleDummyLogout}
-              title="Logout"
-              className="bg-slate-800 hover:bg-rose-600 text-slate-200 hover:text-white px-2.5 py-1.5 rounded-lg text-[11px] font-bold flex items-center gap-1 transition cursor-pointer border border-slate-700"
-            >
-              <LogOut className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Logout</span>
-            </button>
+                <button
+                  type="button"
+                  onClick={handleDummyLogout}
+                  title="Logout"
+                  className="bg-slate-800 hover:bg-rose-600 text-slate-200 hover:text-white px-2.5 py-1.5 rounded-lg text-[11px] font-bold flex items-center gap-1 transition cursor-pointer border border-slate-700"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Logout</span>
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  setPendingAction(null);
+                  setLoginError('');
+                  setShowLoginModal(true);
+                }}
+                className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+              >
+                <Lock className="w-3.5 h-3.5" />
+                <span>Login</span>
+              </button>
+            )}
           </div>
         </div>
 
-        {/* Clean, Focused Main Navigation Tabs: Vehicle Registration, Suppliers, Expenses, Service */}
+        {/* Clean, Focused Main Navigation Tabs: Home, Vehicle, Suppliers, Expenses, Job */}
         <div className="max-w-7xl mx-auto px-4 border-t border-slate-800 flex overflow-x-auto scrollbar-none">
           {[
+            { id: 'Home', label: 'Home', icon: Home },
             { id: 'Cs/Vehicle', label: 'Vehicle', icon: Car },
             { id: 'Supplier', label: 'Suppliers', icon: Truck },
             { id: 'Expenses', label: 'Expenses', icon: TrendingUp },
             { id: 'Job', label: 'Job', icon: History },
           ].map(({ id, label, icon: Icon }) => {
-            const isActive = activeTab === id;
+            const isActive = (isLoggedIn ? activeTab : 'Home') === id;
             return (
               <button
                 key={id}
                 onClick={() => {
-                  setActiveTab(id);
-                  if (id === 'Cs/Vehicle') {
-                    setVehicleSubTab('registration');
+                  if (id === 'Home') {
+                    setActiveTab('Home');
+                  } else {
+                    requireAuth(() => {
+                      setActiveTab(id);
+                      if (id === 'Cs/Vehicle') {
+                        setVehicleSubTab('registration');
+                      }
+                    });
                   }
                 }}
                 className={`px-3.5 sm:px-6 py-2.5 sm:py-3.5 text-xs sm:text-sm font-bold tracking-wide transition-all border-b-2 whitespace-nowrap flex items-center gap-2 sm:gap-2.5 cursor-pointer ${isActive
@@ -2824,6 +2884,176 @@ export default function ServiceCenterApp() {
 
       {/* Main Content Area */}
       <main className="max-w-7xl mx-auto px-2.5 sm:px-4 py-4 sm:py-6 space-y-4 sm:space-y-6">
+
+        {/* =========================================================================
+            TAB: HOME DASHBOARD (OVERVIEW, QUICK ACTIONS, RECENT SERVICES & ALERTS)
+            ========================================================================= */}
+        {activeTab === 'Home' && (
+          <div className="space-y-6">
+            {/* Split-Screen Hero Banner (Inspired by Modern Auto Care Landing) */}
+            <div className="bg-white rounded-2xl shadow-md border border-slate-200 overflow-hidden grid grid-cols-1 lg:grid-cols-2">
+              {/* Left Column: Brand Messaging & Primary CTAs */}
+              <div className="p-6 sm:p-9 lg:p-10 flex flex-col justify-center bg-gradient-to-br from-white via-slate-50 to-cyan-50/40">
+                <div className="inline-flex items-center gap-2 self-start bg-white border border-slate-200 shadow-xs rounded-full px-3.5 py-1.5 mb-5">
+                  <span className="w-2 h-2 rounded-full bg-cyan-500" />
+                  <span className="text-[11px] font-bold tracking-widest uppercase text-slate-700">
+                    Trusted Auto Care • {todayStr}
+                  </span>
+                </div>
+
+                <h2 className="text-3xl sm:text-4xl lg:text-5xl font-black tracking-tight leading-tight">
+                  <span className="text-cyan-600 block">AUTO CARE</span>
+                  <span className="text-slate-900">Service Center</span>
+                </h2>
+                <div className="w-14 h-1 bg-cyan-500 rounded-full my-3.5" />
+
+                <p className="text-base sm:text-lg font-bold text-slate-800">
+                  Drive Without Worries.
+                </p>
+                <p className="text-xs sm:text-sm text-slate-500 mt-1.5 leading-relaxed max-w-md">
+                  Experience premium diagnostics, certified technicians, and performance-driven repairs engineered for reliability and excellence.
+                </p>
+
+                <div className="flex flex-wrap gap-3 mt-6">
+                  <button
+                    type="button"
+                    onClick={() => requireAuth(() => {
+                      setActiveTab('Cs/Vehicle');
+                      setVehicleSubTab('service');
+                      setServiceSubTab('add');
+                    })}
+                    className="bg-gradient-to-r from-cyan-700 to-teal-700 hover:from-cyan-600 hover:to-teal-600 text-white text-xs font-bold uppercase tracking-wider px-5 py-3 rounded-xl flex items-center gap-2 shadow-sm transition cursor-pointer"
+                  >
+                    <Wrench className="w-4 h-4" />
+                    New Service →
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => requireAuth(() => {
+                      setActiveTab('Cs/Vehicle');
+                      setVehicleSubTab('registration');
+                    })}
+                    className="bg-white hover:bg-slate-50 text-cyan-700 border-2 border-cyan-600 text-xs font-bold uppercase tracking-wider px-5 py-3 rounded-xl flex items-center gap-2 transition cursor-pointer"
+                  >
+                    <Car className="w-4 h-4" />
+                    Register Vehicle
+                  </button>
+                </div>
+
+                {/* Compact Low Stock Items & Attention Alerts */}
+                <div className="mt-5 bg-white/90 border border-slate-200 rounded-xl overflow-hidden shadow-xs">
+                  <div className="bg-slate-50 border-b border-slate-200 px-3.5 py-2 flex items-center justify-between">
+                    <span className="font-bold text-[11px] uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
+                      <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                      Low Stock Items &amp; Attention Alerts
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => requireAuth(() => { setActiveTab('Supplier'); setSupplierSubTab('items'); })}
+                      className="text-[11px] font-bold text-indigo-600 hover:underline cursor-pointer"
+                    >
+                      Manage Stock →
+                    </button>
+                  </div>
+                  <div className="p-3 space-y-2 text-xs max-h-40 overflow-y-auto">
+                    {catalogItems.filter(i => Number(i.qtyOnHand || 0) <= 3).length === 0 && (financials.paymentsRequiringAttentionToday || []).length === 0 ? (
+                      <div className="py-2 text-center text-slate-400">
+                        All stock levels and supplier payments look good!
+                      </div>
+                    ) : (
+                      <>
+                        {catalogItems
+                          .filter(i => Number(i.qtyOnHand || 0) <= 3)
+                          .slice(0, 3)
+                          .map((it, idx) => (
+                            <div key={it.id || it._id || idx} className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
+                              <div className="truncate pr-2">
+                                <span className="font-bold text-slate-900">{it.description}</span>
+                                <span className="ml-1.5 font-mono text-[10px] text-slate-500">({it.itemCode})</span>
+                              </div>
+                              <span className="font-mono font-black text-rose-700 shrink-0">
+                                {it.qtyOnHand || 0} {it.stockUnit || ''} left
+                              </span>
+                            </div>
+                          ))}
+                        {(financials.paymentsRequiringAttentionToday || []).slice(0, 3).map((inv, idx) => (
+                          <div
+                            key={inv.id || inv._id || idx}
+                            onClick={() => requireAuth(() => { setActiveTab('Expenses'); setExpenseSubTab('pay_today'); })}
+                            className="flex items-center justify-between bg-rose-50 border border-rose-200 rounded-lg px-2.5 py-1.5 cursor-pointer hover:bg-rose-100/70"
+                          >
+                            <div className="truncate pr-2">
+                              <span className="font-bold text-rose-900">{inv.supplierName}</span>
+                              <span className="ml-1.5 text-[10px] font-bold text-rose-700">({inv.attentionReason})</span>
+                            </div>
+                            <span className="font-mono font-black text-rose-800 shrink-0">
+                              LKR {Number(inv.balance || 0).toLocaleString()}
+                            </span>
+                          </div>
+                        ))}
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-2 mt-4 pt-4 border-t border-slate-200/80">
+                  <button
+                    type="button"
+                    onClick={() => requireAuth(() => {
+                      setActiveTab('Supplier');
+                      setSupplierSubTab('items');
+                    })}
+                    className="text-xs font-semibold text-slate-600 hover:text-indigo-700 bg-slate-100 hover:bg-indigo-50 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition cursor-pointer"
+                  >
+                    <Package className="w-3.5 h-3.5 text-indigo-600" />
+                    Supplier Stock
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => requireAuth(() => {
+                      setActiveTab('Expenses');
+                      setExpenseSubTab('expenses');
+                    })}
+                    className="text-xs font-semibold text-slate-600 hover:text-emerald-700 bg-slate-100 hover:bg-emerald-50 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition cursor-pointer"
+                  >
+                    <TrendingUp className="w-3.5 h-3.5 text-emerald-600" />
+                    Daily Expenses
+                  </button>
+                </div>
+              </div>
+
+              {/* Right Column: Full-Bleed Workshop Bay Visual with Floating Stat Badges */}
+              <div className="relative min-h-[280px] sm:min-h-[340px] lg:min-h-[380px] bg-slate-900">
+                <img
+                  src="/images/hero-service-bay.jpg"
+                  alt="Auto Care Service Center Workshop Bay"
+                  className="absolute inset-0 w-full h-full object-cover"
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-slate-950/75 via-slate-900/20 to-slate-950/40" />
+
+                {/* Top-Left Floating Badge */}
+                <div className="absolute top-4 left-4 bg-slate-900/75 backdrop-blur-md border border-white/15 text-white px-4 py-2.5 rounded-xl shadow-lg">
+                  <div className="text-[10px] font-bold uppercase tracking-widest text-cyan-300">
+                    Registered Fleet
+                  </div>
+                  <div className="text-lg sm:text-xl font-black font-mono">
+                    {vehicles.length} Vehicles
+                  </div>
+                </div>
+
+                {/* Bottom-Right Floating Badge */}
+                <div className="absolute bottom-4 right-4 bg-slate-900/75 backdrop-blur-md border border-white/15 text-white px-4 py-2.5 rounded-xl text-right shadow-lg">
+                  <div className="text-[10px] font-bold uppercase tracking-widest text-slate-300">
+                    Services Recorded
+                  </div>
+                  <div className="text-lg sm:text-xl font-black font-mono text-cyan-300">
+                    {allServices.length} Jobs
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* =========================================================================
             TAB: SUPPLIER PAYMENT TRACKER & SUPPLIER REGISTRATION (MATCHES USER EXCEL)
