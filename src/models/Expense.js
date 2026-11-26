@@ -4,27 +4,13 @@ const ExpenseSchema = new mongoose.Schema(
   {
     expenseNo: { type: String, required: true, trim: true },
     expenseDate: { type: String, required: true }, // YYYY-MM-DD
-    category: { 
-      type: String, 
+    category: {
+      type: String,
       required: true,
       default: 'Maintenance',
-      enum: [
-        'Supplier',
-        'Electricity',
-        'Telephone',
-        'Salary',
-        'Medicine',
-        'Maintenance',
-        'Tea & Sugar',
-        'Staff',
-        'Meals',
-        'Kerosine oil',
-        'Rent',
-        'Hardware',
-        'Government / Tax',
-        'Other'
-      ]
+      trim: true
     },
+    payeeType: { type: String, default: 'Other', enum: ['Other', 'Worker', 'Vendor'] },
     payee: { type: String, required: true, trim: true },
     amount: { type: Number, required: true, default: 0 },
     paymentMethod: { type: String, default: 'Cash', enum: ['Cash', 'Card', 'Bank Transfer', 'Cheque'] },

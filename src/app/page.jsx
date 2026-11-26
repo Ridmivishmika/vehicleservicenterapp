@@ -161,15 +161,25 @@ export default function ServiceCenterApp() {
     description: '',
     supplierName: '',
     category: 'Oils & Fluids',
-    qtyOnHand: 10,
+    qtyOnHand: 0,
     costPrice: 0,
-    sellingPrice: 0
+    sellingPrice: 0,
+    stockDate: '',
+    stockTime: ''
   };
   const [itemForm, setItemForm] = useState(emptyItemForm);
   const [isEditingItem, setIsEditingItem] = useState(false);
   const [editingItemId, setEditingItemId] = useState(null);
   const [showItemForm, setShowItemForm] = useState(false);
   const [supplierItemFilter, setSupplierItemFilter] = useState('ALL');
+  const [stockEntryForm, setStockEntryForm] = useState({
+    selectedItemId: '',
+    costPrice: '',
+    sellingPrice: '',
+    qtyToAdd: '',
+    stockDate: new Date().toISOString().split('T')[0],
+    stockTime: new Date().toTimeString().slice(0, 5)
+  });
 
   // Quick Part selector for Vehicle Service Logger
   const [quickSelectedPartCode, setQuickSelectedPartCode] = useState('');
@@ -198,6 +208,10 @@ export default function ServiceCenterApp() {
   const [supplierSubTab, setSupplierSubTab] = useState('register'); // 'register' | 'items' | 'add_invoice' | 'tracker' | 'payments'
   const [supplierFilterStatus, setSupplierFilterStatus] = useState('ALL'); // 'ALL' | 'OVERDUE' | 'ONGOING' | 'PAID'
   const [supplierSearchQuery, setSupplierSearchQuery] = useState('');
+  const [registerItemSupplierSearch, setRegisterItemSupplierSearch] = useState('');
+  const [stockEntrySupplierSearch, setStockEntrySupplierSearch] = useState('');
+  const [stockEntrySupplierFilter, setStockEntrySupplierFilter] = useState('');
+  const [stockEntryItemSearch, setStockEntryItemSearch] = useState('');
 
   // Supplier & Invoice Editing states
   const [isEditingSupplier, setIsEditingSupplier] = useState(false);
@@ -386,7 +400,7 @@ export default function ServiceCenterApp() {
   const [attentionFilter, setAttentionFilter] = useState('ALL'); // 'ALL' | 'OVERDUE' | 'DUE_TODAY'
 
   // Operating Expense Categories matching user's Excel photo (Daily Sale.xlsx Lists):
-  const EXPENSE_CATEGORIES = [
+  const [expenseCategories, setExpenseCategories] = useState([
     'Supplier',
     'Electricity',
     'Telephone',
@@ -399,8 +413,11 @@ export default function ServiceCenterApp() {
     'Meals',
     'Kerosine oil',
     'Cash payments',
-    'Seylan'
-  ];
+    'Seylan',
+    'Other'
+  ]);
+  const [customExpenseCategory, setCustomExpenseCategory] = useState('');
+  const [workerSearchQuery, setWorkerSearchQuery] = useState('');
 
   const INCOME_CATEGORIES = [
     'Vehicle Service',
@@ -413,6 +430,7 @@ export default function ServiceCenterApp() {
   const [newExpenseData, setNewExpenseData] = useState({
     category: 'Electricity',
     description: '',
+    payeeType: 'Other',
     payee: '',
     amount: '',
     expenseDate: new Date().toISOString().split('T')[0],
@@ -674,11 +692,38 @@ export default function ServiceCenterApp() {
     }
   };
 
+  const handleAddCustomExpenseCategory = () => {
+    const trimmed = customExpenseCategory.trim();
+    if (!trimmed) {
+      showNotification('Please enter a custom category name', 'error');
+      return;
+    }
+    if (!expenseCategories.includes(trimmed)) {
+      setExpenseCategories((prev) => {
+        const withoutOther = prev.filter((c) => c !== 'Other');
+        return [...withoutOther, trimmed, 'Other'];
+      });
+    }
+    setNewExpenseData((prev) => ({ ...prev, category: trimmed }));
+    setCustomExpenseCategory('');
+    showNotification(`Category "${trimmed}" added!`);
+  };
+
   const handleSaveExpense = async (e) => {
     e.preventDefault();
     if (!newExpenseData.description || !newExpenseData.amount) {
       showNotification('Description and amount are required', 'error');
       return;
+    }
+    let finalCategory = newExpenseData.category;
+    if (finalCategory === 'Other' && customExpenseCategory.trim()) {
+      finalCategory = customExpenseCategory.trim();
+      if (!expenseCategories.includes(finalCategory)) {
+        setExpenseCategories((prev) => {
+          const withoutOther = prev.filter((c) => c !== 'Other');
+          return [...withoutOther, finalCategory, 'Other'];
+        });
+      }
     }
     try {
       const url = isEditingExpense && editingExpenseId ? `/api/expenses?id=${editingExpenseId}` : '/api/expenses';
@@ -688,6 +733,7 @@ export default function ServiceCenterApp() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...newExpenseData,
+          category: finalCategory,
           amount: Number(newExpenseData.amount)
         })
       });
@@ -697,6 +743,7 @@ export default function ServiceCenterApp() {
         setNewExpenseData({
           category: 'Electricity',
           description: '',
+          payeeType: 'Other',
           payee: '',
           amount: '',
           expenseDate: new Date().toISOString().split('T')[0],
@@ -705,6 +752,7 @@ export default function ServiceCenterApp() {
           status: 'Should Pay Today',
           notes: ''
         });
+        setCustomExpenseCategory('');
         setIsEditingExpense(false);
         setEditingExpenseId(null);
         await Promise.all([loadExpenses(), loadFinancials()]);
@@ -717,9 +765,17 @@ export default function ServiceCenterApp() {
   };
 
   const handleEditExpense = (exp) => {
+    const cat = exp.category || 'Electricity';
+    if (cat && !expenseCategories.includes(cat)) {
+      setExpenseCategories((prev) => {
+        const withoutOther = prev.filter((c) => c !== 'Other');
+        return [...withoutOther, cat, 'Other'];
+      });
+    }
     setNewExpenseData({
-      category: exp.category || 'Electricity',
+      category: cat,
       description: exp.description || '',
+      payeeType: exp.payeeType === 'Worker' ? 'Worker' : 'Other',
       payee: exp.payee || '',
       amount: exp.amount || '',
       expenseDate: exp.expenseDate || new Date().toISOString().split('T')[0],
@@ -953,8 +1009,10 @@ export default function ServiceCenterApp() {
     }));
   };
 
-  const handleSelectCatalogItem = (index, itemCode) => {
-    const found = catalogItems.find(i => i.itemCode === itemCode);
+  const handleSelectCatalogItem = (index, selectedVal) => {
+    const found = catalogItems.find(
+      i => i.id === selectedVal || i._id === selectedVal || i.itemCode === selectedVal
+    );
     if (!found) return;
 
     setServiceForm(prev => {
@@ -962,6 +1020,7 @@ export default function ServiceCenterApp() {
       const qty = updated[index]?.quantity || 1;
       const price = found.sellingPrice || 0;
       updated[index] = {
+        itemId: found.id || found._id || '',
         code: found.itemCode,
         name: found.description,
         supplier: found.supplierName || 'General',
@@ -1641,14 +1700,103 @@ export default function ServiceCenterApp() {
       });
       const json = await res.json();
       if (json.success) {
-        showNotification(isEditingItem ? `Item "${itemForm.description}" updated!` : `Item "${itemForm.description}" added to inventory!`);
+        showNotification(isEditingItem ? `Item "${itemForm.description}" updated!` : `Item "${itemForm.description}" registered! Now add price & stock in Part 2.`);
         await loadCatalogItems();
+        if (!isEditingItem && json.data) {
+          setStockEntrySupplierFilter(json.data.supplierName || '');
+          setStockEntryItemSearch('');
+          setStockEntryForm((prev) => ({
+            ...prev,
+            selectedItemId: json.data.id || json.data._id || '',
+            costPrice: json.data.costPrice || '',
+            sellingPrice: json.data.sellingPrice || '',
+            qtyToAdd: '',
+            stockDate: new Date().toISOString().split('T')[0],
+            stockTime: new Date().toTimeString().slice(0, 5)
+          }));
+        }
         setItemForm(emptyItemForm);
         setIsEditingItem(false);
         setEditingItemId(null);
-        setShowItemForm(false);
+        setRegisterItemSupplierSearch('');
       } else {
         showNotification(json.message || 'Failed to save item', 'error');
+      }
+    } catch (err) {
+      showNotification('Error: ' + err.message, 'error');
+    }
+  };
+
+  const handleAddItemStock = async (e) => {
+    e.preventDefault();
+    if (!stockEntryForm.selectedItemId) {
+      showNotification('Please select a registered item first!', 'error');
+      return;
+    }
+    const targetItem = catalogItems.find(
+      (i) => (i.id || i._id) === stockEntryForm.selectedItemId
+    );
+    if (!targetItem) {
+      showNotification('Selected item not found', 'error');
+      return;
+    }
+    const addedQty = Number(stockEntryForm.qtyToAdd) || 0;
+    const stockDate = stockEntryForm.stockDate || new Date().toISOString().split('T')[0];
+    const stockTime = stockEntryForm.stockTime || new Date().toTimeString().slice(0, 5);
+    const isInitialUnstocked =
+      Number(targetItem.qtyOnHand || 0) === 0 &&
+      Number(targetItem.costPrice || 0) === 0 &&
+      Number(targetItem.sellingPrice || 0) === 0 &&
+      !targetItem.stockDate;
+
+    try {
+      const res = isInitialUnstocked
+        ? await fetch(`/api/items/${targetItem.id || targetItem._id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              costPrice: Number(stockEntryForm.costPrice) || 0,
+              sellingPrice: Number(stockEntryForm.sellingPrice) || 0,
+              qtyOnHand: addedQty,
+              stockDate,
+              stockTime
+            })
+          })
+        : await fetch('/api/items', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              itemCode: targetItem.itemCode,
+              barcode: targetItem.barcode || '',
+              description: targetItem.description,
+              supplierName: targetItem.supplierName || '',
+              category: targetItem.category || 'General',
+              costPrice: Number(stockEntryForm.costPrice) || 0,
+              sellingPrice: Number(stockEntryForm.sellingPrice) || 0,
+              qtyOnHand: addedQty,
+              stockDate,
+              stockTime
+            })
+          });
+      const json = await res.json();
+      if (json.success) {
+        showNotification(
+          isInitialUnstocked
+            ? `Saved "${targetItem.description}" stock (+${addedQty}) & pricing!`
+            : `Added new stock & price entry for "${targetItem.description}" (+${addedQty})!`
+        );
+        await loadCatalogItems();
+        setStockEntryItemSearch('');
+        setStockEntryForm({
+          selectedItemId: '',
+          costPrice: '',
+          sellingPrice: '',
+          qtyToAdd: '',
+          stockDate: new Date().toISOString().split('T')[0],
+          stockTime: new Date().toTimeString().slice(0, 5)
+        });
+      } else {
+        showNotification(json.message || 'Failed to save stock & price', 'error');
       }
     } catch (err) {
       showNotification('Error: ' + err.message, 'error');
@@ -1927,10 +2075,10 @@ export default function ServiceCenterApp() {
         {/* Clean, Focused Main Navigation Tabs: Vehicle Registration, Suppliers, Expenses, Service */}
         <div className="max-w-7xl mx-auto px-4 border-t border-slate-800 flex overflow-x-auto scrollbar-none">
           {[
-            { id: 'Cs/Vehicle', label: 'Vehicle Registration', icon: Car },
+            { id: 'Cs/Vehicle', label: 'Vehicle', icon: Car },
             { id: 'Supplier', label: 'Suppliers', icon: Truck },
             { id: 'Expenses', label: 'Expenses', icon: TrendingUp },
-            { id: 'Job', label: 'Service', icon: History },
+            { id: 'Job', label: 'Job', icon: History },
           ].map(({ id, label, icon: Icon }) => {
             const isActive = activeTab === id;
             return (
@@ -2363,7 +2511,7 @@ export default function ServiceCenterApp() {
                   SUB-VIEW 2: SUPPLIER ITEMS & PARTS CATALOG (VISIBLE & EDITABLE UNDER SUPPLIER)
                   ========================================================================= */}
               {supplierSubTab === 'items' && (
-                <div className="p-6 space-y-6">
+                <div className="p-4 sm:p-6 space-y-6">
                   {/* Sub-view Header */}
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 pb-3">
                     <div>
@@ -2372,56 +2520,111 @@ export default function ServiceCenterApp() {
                         Supplier Items & Parts Catalog ({catalogItems.length})
                       </h3>
                     </div>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (showItemForm && isEditingItem) {
-                          setIsEditingItem(false);
-                          setEditingItemId(null);
-                          setItemForm(emptyItemForm);
-                        }
-                        setShowItemForm(!showItemForm);
-                      }}
-                      className={`font-bold text-xs px-3.5 py-2 rounded-lg transition flex items-center gap-1.5 cursor-pointer shadow-xs ${showItemForm
-                        ? 'bg-slate-200 hover:bg-slate-300 text-slate-800'
-                        : 'bg-indigo-600 hover:bg-indigo-700 text-white'
-                        }`}
-                    >
-                      {showItemForm ? <X className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
-                      {showItemForm ? 'Close Form' : '+ Add New Supplied Item'}
-                    </button>
                   </div>
 
-                  {/* Add / Edit Supplied Item Form */}
-                  {showItemForm && (
-                    <form onSubmit={handleSaveItem} className="bg-slate-50 border border-slate-200 rounded-xl p-5 space-y-4">
+                  {/* 2-Part Item Management: Part 1 (Register Item) & Part 2 (Add Stock & Pricing for Selected Item) */}
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    {/* PART 1: Register Item */}
+                    <form onSubmit={handleSaveItem} className="bg-slate-50 border border-slate-200 rounded-xl p-4 sm:p-5 space-y-4">
                       <div className="flex items-center justify-between border-b border-slate-200 pb-2">
                         <h4 className="font-bold text-sm text-slate-900 flex items-center gap-2">
                           {isEditingItem ? <Edit3 className="w-4 h-4 text-amber-600" /> : <Plus className="w-4 h-4 text-indigo-600" />}
-                          {isEditingItem ? `Edit Supplied Item: ${itemForm.itemCode}` : 'Register New Item Supplied by Vendor'}
+                          {isEditingItem ? `Edit Registered Item: ${itemForm.itemCode}` : '1. Register Item'}
                         </h4>
                         {isEditingItem && (
-                          <span className="text-[10px] bg-amber-100 text-amber-800 font-bold px-2 py-0.5 rounded">
-                            Editing
-                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setItemForm(emptyItemForm);
+                              setIsEditingItem(false);
+                              setEditingItemId(null);
+                              setRegisterItemSupplierSearch('');
+                            }}
+                            className="text-xs text-slate-500 hover:text-slate-800 underline cursor-pointer"
+                          >
+                            Cancel
+                          </button>
                         )}
                       </div>
 
-                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
-                        <div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                        <div className="relative">
                           <label className="block font-bold text-slate-700 mb-1">Supplied by Vendor *</label>
+                          <div className="relative mb-1.5">
+                            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                            <input
+                              type="text"
+                              value={registerItemSupplierSearch}
+                              onChange={(e) => setRegisterItemSupplierSearch(e.target.value)}
+                              placeholder="Search supplier..."
+                              className="w-full bg-white border border-slate-300 rounded pl-8 pr-7 py-1.5 text-xs text-slate-800 outline-none focus:ring-1 focus:ring-indigo-500"
+                            />
+                            {registerItemSupplierSearch && (
+                              <button
+                                type="button"
+                                onClick={() => setRegisterItemSupplierSearch('')}
+                                className="text-slate-400 hover:text-slate-600 absolute right-2 top-1/2 -translate-y-1/2 cursor-pointer"
+                                title="Clear supplier search"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                            {registerItemSupplierSearch.trim() && (() => {
+                              const q = registerItemSupplierSearch.trim().toLowerCase();
+                              const matches = suppliers.filter(s =>
+                                (s.supplierName && s.supplierName.toLowerCase().includes(q)) ||
+                                (s.contactPerson && s.contactPerson.toLowerCase().includes(q)) ||
+                                (s.telephone && s.telephone.toLowerCase().includes(q))
+                              );
+                              return (
+                                <div className="absolute left-0 right-0 top-full mt-1 z-30 bg-white border border-indigo-300 rounded-lg shadow-lg max-h-48 overflow-y-auto divide-y divide-slate-100">
+                                  {matches.length === 0 ? (
+                                    <div className="px-3 py-2 text-xs text-slate-400 italic">No supplier matching &quot;{registerItemSupplierSearch}&quot;</div>
+                                  ) : (
+                                    matches.map(s => (
+                                      <button
+                                        key={s.id || s._id}
+                                        type="button"
+                                        onClick={() => {
+                                          setItemForm({ ...itemForm, supplierName: s.supplierName });
+                                          setRegisterItemSupplierSearch('');
+                                        }}
+                                        className={`w-full text-left px-3 py-2 text-xs hover:bg-indigo-50 flex items-center justify-between cursor-pointer ${
+                                          itemForm.supplierName === s.supplierName ? 'bg-indigo-50 font-bold text-indigo-800' : 'text-slate-800'
+                                        }`}
+                                      >
+                                        <span className="font-semibold">{s.supplierName}</span>
+                                        {s.telephone && <span className="text-[10px] text-slate-400 font-mono">{s.telephone}</span>}
+                                      </button>
+                                    ))
+                                  )}
+                                </div>
+                              );
+                            })()}
+                          </div>
                           <select
                             value={itemForm.supplierName}
                             onChange={(e) => setItemForm({ ...itemForm, supplierName: e.target.value })}
                             className="w-full bg-white border border-slate-300 rounded px-3 py-2 text-slate-900 font-semibold outline-none focus:ring-1 focus:ring-indigo-500"
+                            required
                           >
-                            <option value="">-- General / No Vendor --</option>
-                            {suppliers.map(s => (
-                              <option key={s.id || s._id} value={s.supplierName}>
-                                {s.supplierName}
-                              </option>
-                            ))}
+                            <option value="">-- Select Vendor --</option>
+                            {suppliers
+                              .filter(s => {
+                                if (s.supplierName === itemForm.supplierName) return true;
+                                if (!registerItemSupplierSearch.trim()) return true;
+                                const q = registerItemSupplierSearch.trim().toLowerCase();
+                                return (
+                                  (s.supplierName && s.supplierName.toLowerCase().includes(q)) ||
+                                  (s.contactPerson && s.contactPerson.toLowerCase().includes(q)) ||
+                                  (s.telephone && s.telephone.toLowerCase().includes(q))
+                                );
+                              })
+                              .map(s => (
+                                <option key={s.id || s._id} value={s.supplierName}>
+                                  {s.supplierName}
+                                </option>
+                              ))}
                           </select>
                         </div>
 
@@ -2476,14 +2679,259 @@ export default function ServiceCenterApp() {
                             required
                           />
                         </div>
+                      </div>
+
+                      <div className="pt-1">
+                        <button
+                          type="submit"
+                          className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-5 py-2 rounded-lg text-xs transition flex items-center gap-1.5 cursor-pointer shadow-xs"
+                        >
+                          <Save className="w-4 h-4" />
+                          {isEditingItem ? 'Update Registered Item' : 'Register Item'}
+                        </button>
+                      </div>
+                    </form>
+
+                    {/* PART 2: Add Items (Stock, Cost, Selling Price, Date & Time) for Selected Item */}
+                    <form onSubmit={handleAddItemStock} className="bg-blue-50/50 border border-blue-200 rounded-xl p-4 sm:p-5 space-y-4">
+                      <div className="flex items-center justify-between border-b border-blue-200 pb-2">
+                        <h4 className="font-bold text-sm text-slate-900 flex items-center gap-2">
+                          <Package className="w-4 h-4 text-blue-600" />
+                          2. Add Stock & Pricing for Selected Item
+                        </h4>
+                        {stockEntryForm.selectedItemId && (() => {
+                          const sel = catalogItems.find((i) => (i.id || i._id) === stockEntryForm.selectedItemId);
+                          if (!sel) return null;
+                          const totalStock = catalogItems
+                            .filter((i) => i.itemCode === sel.itemCode && (i.supplierName || '') === (sel.supplierName || ''))
+                            .reduce((sum, i) => sum + (Number(i.qtyOnHand) || 0), 0);
+                          return (
+                            <span className="text-[11px] bg-blue-100 text-blue-800 font-bold px-2 py-0.5 rounded">
+                              Total Stock: {totalStock}
+                            </span>
+                          );
+                        })()}
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                        {/* Top-Left: Search & Select Supplier */}
+                        <div className="relative">
+                          <label className="block font-bold text-slate-700 mb-1">Filter by Vendor</label>
+                          <div className="relative mb-1.5">
+                            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                            <input
+                              type="text"
+                              value={stockEntrySupplierSearch}
+                              onChange={(e) => setStockEntrySupplierSearch(e.target.value)}
+                              placeholder="Search supplier..."
+                              className="w-full bg-white border border-slate-300 rounded pl-8 pr-7 py-1.5 text-xs text-slate-800 outline-none focus:ring-1 focus:ring-blue-500"
+                            />
+                            {stockEntrySupplierSearch && (
+                              <button
+                                type="button"
+                                onClick={() => setStockEntrySupplierSearch('')}
+                                className="text-slate-400 hover:text-slate-600 absolute right-2 top-1/2 -translate-y-1/2 cursor-pointer"
+                                title="Clear supplier search"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                            {stockEntrySupplierSearch.trim() && (() => {
+                              const q = stockEntrySupplierSearch.trim().toLowerCase();
+                              const matches = suppliers.filter(s =>
+                                (s.supplierName && s.supplierName.toLowerCase().includes(q)) ||
+                                (s.contactPerson && s.contactPerson.toLowerCase().includes(q)) ||
+                                (s.telephone && s.telephone.toLowerCase().includes(q))
+                              );
+                              return (
+                                <div className="absolute left-0 right-0 top-full mt-1 z-30 bg-white border border-blue-300 rounded-lg shadow-lg max-h-48 overflow-y-auto divide-y divide-slate-100">
+                                  {matches.length === 0 ? (
+                                    <div className="px-3 py-2 text-xs text-slate-400 italic">No supplier matching &quot;{stockEntrySupplierSearch}&quot;</div>
+                                  ) : (
+                                    matches.map(s => (
+                                      <button
+                                        key={s.id || s._id}
+                                        type="button"
+                                        onClick={() => {
+                                          setStockEntrySupplierFilter(s.supplierName);
+                                          setStockEntrySupplierSearch('');
+                                          setStockEntryItemSearch('');
+                                          setStockEntryForm({
+                                            ...stockEntryForm,
+                                            selectedItemId: '',
+                                            costPrice: '',
+                                            sellingPrice: ''
+                                          });
+                                        }}
+                                        className={`w-full text-left px-3 py-2 text-xs hover:bg-blue-50 flex items-center justify-between cursor-pointer ${
+                                          stockEntrySupplierFilter === s.supplierName ? 'bg-blue-50 font-bold text-blue-800' : 'text-slate-800'
+                                        }`}
+                                      >
+                                        <span className="font-semibold">{s.supplierName}</span>
+                                        {s.telephone && <span className="text-[10px] text-slate-400 font-mono">{s.telephone}</span>}
+                                      </button>
+                                    ))
+                                  )}
+                                </div>
+                              );
+                            })()}
+                          </div>
+                          <select
+                            value={stockEntrySupplierFilter}
+                            onChange={(e) => {
+                              const vendor = e.target.value;
+                              setStockEntrySupplierFilter(vendor);
+                              setStockEntryItemSearch('');
+                              setStockEntryForm({
+                                ...stockEntryForm,
+                                selectedItemId: '',
+                                costPrice: '',
+                                sellingPrice: ''
+                              });
+                            }}
+                            className="w-full bg-white border border-slate-300 rounded px-3 py-2 text-slate-900 font-semibold outline-none focus:ring-1 focus:ring-blue-500"
+                          >
+                            <option value="">-- All Vendors --</option>
+                            {suppliers
+                              .filter(s => {
+                                if (s.supplierName === stockEntrySupplierFilter) return true;
+                                if (!stockEntrySupplierSearch.trim()) return true;
+                                const q = stockEntrySupplierSearch.trim().toLowerCase();
+                                return (
+                                  (s.supplierName && s.supplierName.toLowerCase().includes(q)) ||
+                                  (s.contactPerson && s.contactPerson.toLowerCase().includes(q)) ||
+                                  (s.telephone && s.telephone.toLowerCase().includes(q))
+                                );
+                              })
+                              .map(s => (
+                                <option key={s.id || s._id} value={s.supplierName}>
+                                  {s.supplierName}
+                                </option>
+                              ))}
+                          </select>
+                        </div>
+
+                        {/* Top-Right: Search & Select Item for Selected Vendor */}
+                        <div className="relative">
+                          <label className="block font-bold text-slate-700 mb-1">Select Registered Item *</label>
+                          <div className="relative mb-1.5">
+                            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                            <input
+                              type="text"
+                              value={stockEntryItemSearch}
+                              onChange={(e) => setStockEntryItemSearch(e.target.value)}
+                              placeholder="Search item code or name..."
+                              className="w-full bg-white border border-slate-300 rounded pl-8 pr-7 py-1.5 text-xs text-slate-800 outline-none focus:ring-1 focus:ring-blue-500"
+                            />
+                            {stockEntryItemSearch && (
+                              <button
+                                type="button"
+                                onClick={() => setStockEntryItemSearch('')}
+                                className="text-slate-400 hover:text-slate-600 absolute right-2 top-1/2 -translate-y-1/2 cursor-pointer"
+                                title="Clear item search"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                            {stockEntryItemSearch.trim() && (() => {
+                              const q = stockEntryItemSearch.trim().toLowerCase();
+                              const uniqueItems = Array.from(
+                                new Map(
+                                  catalogItems.map((it) => [`${it.itemCode}__${it.supplierName || ''}`, it])
+                                ).values()
+                              );
+                              const matches = uniqueItems.filter((it) => {
+                                if (stockEntrySupplierFilter && (it.supplierName || '') !== stockEntrySupplierFilter) return false;
+                                return (
+                                  (it.itemCode && it.itemCode.toLowerCase().includes(q)) ||
+                                  (it.description && it.description.toLowerCase().includes(q)) ||
+                                  (it.barcode && it.barcode.toLowerCase().includes(q)) ||
+                                  (it.supplierName && it.supplierName.toLowerCase().includes(q))
+                                );
+                              });
+                              return (
+                                <div className="absolute left-0 right-0 top-full mt-1 z-30 bg-white border border-blue-300 rounded-lg shadow-lg max-h-48 overflow-y-auto divide-y divide-slate-100">
+                                  {matches.length === 0 ? (
+                                    <div className="px-3 py-2 text-xs text-slate-400 italic">No item matching &quot;{stockEntryItemSearch}&quot;</div>
+                                  ) : (
+                                    matches.map((it) => (
+                                      <button
+                                        key={it.id || it._id || it.itemCode}
+                                        type="button"
+                                        onClick={() => {
+                                          setStockEntryForm({
+                                            ...stockEntryForm,
+                                            selectedItemId: it.id || it._id || '',
+                                            costPrice: it.costPrice ?? '',
+                                            sellingPrice: it.sellingPrice ?? ''
+                                          });
+                                          setStockEntryItemSearch('');
+                                        }}
+                                        className={`w-full text-left px-3 py-2 text-xs hover:bg-blue-50 flex items-center justify-between gap-2 cursor-pointer ${
+                                          stockEntryForm.selectedItemId === (it.id || it._id) ? 'bg-blue-50 font-bold text-blue-800' : 'text-slate-800'
+                                        }`}
+                                      >
+                                        <span className="truncate">
+                                          <span className="font-mono font-bold text-blue-700">{it.itemCode}</span> — {it.description}
+                                        </span>
+                                        <span className="text-[10px] text-slate-500 shrink-0">{it.supplierName || 'General'}</span>
+                                      </button>
+                                    ))
+                                  )}
+                                </div>
+                              );
+                            })()}
+                          </div>
+                          <select
+                            value={stockEntryForm.selectedItemId}
+                            onChange={(e) => {
+                              const id = e.target.value;
+                              const sel = catalogItems.find((i) => (i.id || i._id) === id);
+                              setStockEntryForm({
+                                ...stockEntryForm,
+                                selectedItemId: id,
+                                costPrice: sel ? (sel.costPrice ?? '') : '',
+                                sellingPrice: sel ? (sel.sellingPrice ?? '') : ''
+                              });
+                            }}
+                            className="w-full bg-white border border-slate-300 rounded px-3 py-2 text-slate-900 font-semibold outline-none focus:ring-1 focus:ring-blue-500"
+                            required
+                          >
+                            <option value="">-- Choose Registered Item --</option>
+                            {Array.from(
+                              new Map(
+                                catalogItems.map((it) => [`${it.itemCode}__${it.supplierName || ''}`, it])
+                              ).values()
+                            )
+                              .filter((it) => {
+                                if ((it.id || it._id) === stockEntryForm.selectedItemId) return true;
+                                if (stockEntrySupplierFilter && (it.supplierName || '') !== stockEntrySupplierFilter) return false;
+                                if (!stockEntryItemSearch.trim()) return true;
+                                const q = stockEntryItemSearch.trim().toLowerCase();
+                                return (
+                                  (it.itemCode && it.itemCode.toLowerCase().includes(q)) ||
+                                  (it.description && it.description.toLowerCase().includes(q)) ||
+                                  (it.barcode && it.barcode.toLowerCase().includes(q)) ||
+                                  (it.supplierName && it.supplierName.toLowerCase().includes(q))
+                                );
+                              })
+                              .map((it) => (
+                                <option key={it.id || it._id || it.itemCode} value={it.id || it._id}>
+                                  {it.itemCode} — {it.description} ({it.supplierName || 'General'})
+                                </option>
+                              ))}
+                          </select>
+                        </div>
 
                         <div>
                           <label className="block font-bold text-slate-700 mb-1">Supplier Cost Price (LKR)</label>
                           <input
                             type="number"
-                            value={itemForm.costPrice}
-                            onChange={(e) => setItemForm({ ...itemForm, costPrice: e.target.value })}
-                            placeholder="0.00"
+                            min="0"
+                            step="0.01"
+                            value={stockEntryForm.costPrice}
+                            onChange={(e) => setStockEntryForm({ ...stockEntryForm, costPrice: e.target.value })}
+                            placeholder="0"
                             className="w-full bg-white border border-slate-300 rounded px-3 py-2 text-slate-900 font-mono outline-none"
                           />
                         </div>
@@ -2492,50 +2940,62 @@ export default function ServiceCenterApp() {
                           <label className="block font-bold text-slate-700 mb-1">Customer Selling Price (LKR) *</label>
                           <input
                             type="number"
-                            value={itemForm.sellingPrice}
-                            onChange={(e) => setItemForm({ ...itemForm, sellingPrice: e.target.value })}
+                            min="0"
+                            step="0.01"
+                            value={stockEntryForm.sellingPrice}
+                            onChange={(e) => setStockEntryForm({ ...stockEntryForm, sellingPrice: e.target.value })}
                             placeholder="0.00"
-                            className="w-full bg-white border border-slate-300 rounded px-3 py-2 text-slate-900 font-mono font-bold outline-none focus:ring-1 focus:ring-indigo-500"
+                            className="w-full bg-white border border-slate-300 rounded px-3 py-2 text-slate-900 font-mono font-bold outline-none focus:ring-1 focus:ring-blue-500"
                             required
                           />
                         </div>
 
                         <div>
-                          <label className="block font-bold text-slate-700 mb-1">Quantity in Stock</label>
+                          <label className="block font-bold text-slate-700 mb-1">Quantity in Stock (Add Qty) *</label>
                           <input
                             type="number"
-                            value={itemForm.qtyOnHand}
-                            onChange={(e) => setItemForm({ ...itemForm, qtyOnHand: e.target.value })}
+                            min="0"
+                            value={stockEntryForm.qtyToAdd}
+                            onChange={(e) => setStockEntryForm({ ...stockEntryForm, qtyToAdd: e.target.value })}
                             placeholder="0"
                             className="w-full bg-white border border-slate-300 rounded px-3 py-2 text-slate-900 font-mono font-bold outline-none"
+                            required
                           />
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="block font-bold text-slate-700 mb-1">Date</label>
+                            <input
+                              type="date"
+                              value={stockEntryForm.stockDate}
+                              onChange={(e) => setStockEntryForm({ ...stockEntryForm, stockDate: e.target.value })}
+                              className="w-full bg-white border border-slate-300 rounded px-2 py-2 text-slate-800 outline-none"
+                            />
+                          </div>
+                          <div>
+                            <label className="block font-bold text-slate-700 mb-1">Time</label>
+                            <input
+                              type="time"
+                              value={stockEntryForm.stockTime}
+                              onChange={(e) => setStockEntryForm({ ...stockEntryForm, stockTime: e.target.value })}
+                              className="w-full bg-white border border-slate-300 rounded px-2 py-2 text-slate-800 outline-none"
+                            />
+                          </div>
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-3 pt-2">
+                      <div className="pt-1">
                         <button
                           type="submit"
-                          className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-5 py-2 rounded-lg text-xs transition flex items-center gap-1.5 cursor-pointer shadow-xs"
+                          className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-5 py-2 rounded-lg text-xs transition flex items-center gap-1.5 cursor-pointer shadow-xs"
                         >
-                          <Save className="w-4 h-4" />
-                          {isEditingItem ? 'Update Supplied Item' : 'Save Supplied Item'}
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setItemForm(emptyItemForm);
-                            setIsEditingItem(false);
-                            setEditingItemId(null);
-                            setShowItemForm(false);
-                          }}
-                          className="bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold px-4 py-2 rounded-lg text-xs transition cursor-pointer"
-                        >
-                          Cancel
+                          <Plus className="w-4 h-4" />
+                          Add Stock & Save Price
                         </button>
                       </div>
                     </form>
-                  )}
+                  </div>
 
                   {/* Filter & Search Bar */}
                   <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
@@ -2569,7 +3029,7 @@ export default function ServiceCenterApp() {
 
                   {/* Table of Supplied Items */}
                   <div className="overflow-x-auto border border-slate-200 rounded-lg">
-                    <table className="w-full text-left text-xs border-collapse">
+                    <table className="w-full text-left text-xs border-collapse min-w-[800px]">
                       <thead>
                         <tr className="bg-slate-900 text-white font-mono text-[11px] uppercase tracking-wider">
                           <th className="py-2.5 px-3">Supplier Name</th>
@@ -2580,6 +3040,7 @@ export default function ServiceCenterApp() {
                           <th className="py-2.5 px-3 text-center">Qty on Hand</th>
                           <th className="py-2.5 px-3 text-right">Cost Price (LKR)</th>
                           <th className="py-2.5 px-3 text-right">Selling Price (LKR)</th>
+                          <th className="py-2.5 px-3 text-center">Date & Time</th>
                           <th className="py-2.5 px-3 text-center">Actions</th>
                         </tr>
                       </thead>
@@ -2601,8 +3062,8 @@ export default function ServiceCenterApp() {
                           if (filtered.length === 0) {
                             return (
                               <tr>
-                                <td colSpan="9" className="py-8 text-center text-slate-400">
-                                  No items found for the selected supplier. Click "+ Add New Supplied Item" to add items.
+                                <td colSpan="10" className="py-8 text-center text-slate-400">
+                                  No items found for the selected supplier. Use "1. Register Item" above to add items.
                                 </td>
                               </tr>
                             );
@@ -2631,6 +3092,10 @@ export default function ServiceCenterApp() {
                               </td>
                               <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-900">
                                 {Number(item.sellingPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                              </td>
+                              <td className="py-2.5 px-3 text-center font-mono text-[11px] text-slate-600">
+                                {item.stockDate || item.updatedAt?.slice(0, 10) || '-'}
+                                {item.stockTime ? ` ${item.stockTime}` : ''}
                               </td>
                               <td className="py-2.5 px-3 text-center">
                                 <div className="flex items-center justify-center gap-1.5">
@@ -4401,8 +4866,8 @@ export default function ServiceCenterApp() {
                                 <option value="">-- Choose Item / Part supplied by vendors to add to service bill --</option>
                                 {catalogItems
                                   .filter(item => quickPartSupplierFilter === 'ALL' || item.supplierName === quickPartSupplierFilter)
-                                  .map(item => (
-                                    <option key={item.itemCode || item.id || item._id} value={item.itemCode}>
+                                  .map((item, itemIdx) => (
+                                    <option key={item.id || item._id || `${item.itemCode}-${itemIdx}`} value={item.id || item._id || item.itemCode}>
                                       {item.supplierName ? `[${item.supplierName}] ` : '[General] '}
                                       {item.description} ({item.itemCode}) — LKR {Number(item.sellingPrice || 0).toLocaleString()} (Stock: {item.qtyOnHand || 0})
                                     </option>
@@ -4488,13 +4953,13 @@ export default function ServiceCenterApp() {
                                     </td>
                                     <td className="p-2">
                                       <select
-                                        value={p.code || ''}
+                                        value={p.itemId || p.code || ''}
                                         onChange={(e) => handleSelectCatalogItem(idx, e.target.value)}
                                         className="w-full bg-white border border-slate-300 rounded px-2 py-1 text-xs text-slate-700 outline-none"
                                       >
                                         <option value="">-- Quick Pick Item --</option>
-                                        {catalogItems.map(cat => (
-                                          <option key={cat.itemCode} value={cat.itemCode}>
+                                        {catalogItems.map((cat, catIdx) => (
+                                          <option key={cat.id || cat._id || `${cat.itemCode}-${catIdx}`} value={cat.id || cat._id || cat.itemCode}>
                                             {cat.supplierName ? `[${cat.supplierName}] ` : ''}{cat.description} ({cat.itemCode}) — LKR {cat.sellingPrice.toLocaleString()}
                                           </option>
                                         ))}
@@ -5508,22 +5973,71 @@ export default function ServiceCenterApp() {
                           onChange={(e) => setNewExpenseData({ ...newExpenseData, category: e.target.value })}
                           className="w-full bg-white border border-slate-300 rounded px-2.5 py-1.5 text-slate-800 outline-none focus:ring-1 focus:ring-blue-500 font-semibold"
                         >
-                          {EXPENSE_CATEGORIES.map((c) => (
+                          {expenseCategories.map((c) => (
                             <option key={c} value={c}>{c}</option>
                           ))}
                         </select>
+
+                        {newExpenseData.category === 'Other' && (
+                          <div className="mt-2 flex gap-1.5">
+                            <input
+                              type="text"
+                              value={customExpenseCategory}
+                              onChange={(e) => setCustomExpenseCategory(e.target.value)}
+                              placeholder="Enter new category name..."
+                              className="flex-1 bg-white border border-blue-400 rounded px-2.5 py-1 text-slate-900 outline-none focus:ring-1 focus:ring-blue-500"
+                            />
+                            <button
+                              type="button"
+                              onClick={handleAddCustomExpenseCategory}
+                              className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1 rounded text-xs transition cursor-pointer"
+                            >
+                              Add
+                            </button>
+                          </div>
+                        )}
                       </div>
 
                       <div>
-                        <label className="block font-bold text-slate-700 mb-1">Payee / Vendor *</label>
+                        <label className="block font-bold text-slate-700 mb-1">Payee Type (Other / Worker) *</label>
+                        <div className="grid grid-cols-2 gap-1.5 mb-2">
+                          {['Other', 'Worker'].map((type) => (
+                            <button
+                              key={type}
+                              type="button"
+                              onClick={() => setNewExpenseData({ ...newExpenseData, payeeType: type })}
+                              className={`py-1.5 rounded text-xs font-bold border transition cursor-pointer ${
+                                (newExpenseData.payeeType || 'Other') === type
+                                  ? 'bg-slate-900 text-white border-slate-900'
+                                  : 'bg-slate-50 text-slate-700 border-slate-300 hover:bg-slate-100'
+                              }`}
+                            >
+                              {type}
+                            </button>
+                          ))}
+                        </div>
+                        <label className="block font-bold text-slate-700 mb-1">
+                          {(newExpenseData.payeeType || 'Other') === 'Worker' ? 'Worker Name *' : 'Other / Payee Name *'}
+                        </label>
                         <input
                           type="text"
+                          list={(newExpenseData.payeeType || 'Other') === 'Worker' ? 'worker-names-list' : 'expense-other-names-list'}
                           value={newExpenseData.payee}
                           onChange={(e) => setNewExpenseData({ ...newExpenseData, payee: e.target.value })}
-                          placeholder="e.g. Ceylon Electricity Board / Local Grocery"
+                          placeholder={(newExpenseData.payeeType || 'Other') === 'Worker' ? 'Enter worker name...' : 'e.g. Ceylon Electricity Board / Payee name'}
                           className="w-full bg-white border border-slate-300 rounded px-2.5 py-1.5 text-slate-800 outline-none focus:ring-1 focus:ring-blue-500"
                           required
                         />
+                        <datalist id="expense-other-names-list">
+                          {suppliers.map(s => (
+                            <option key={s.id || s._id} value={s.supplierName} />
+                          ))}
+                        </datalist>
+                        <datalist id="worker-names-list">
+                          {Array.from(new Set(expenses.filter(e => e.payeeType === 'Worker' && e.payee).map(e => e.payee))).map(name => (
+                            <option key={name} value={name} />
+                          ))}
+                        </datalist>
                       </div>
 
                       <div>
@@ -5617,6 +6131,7 @@ export default function ServiceCenterApp() {
                               setNewExpenseData({
                                 category: 'Electricity',
                                 description: '',
+                                payeeType: 'Other',
                                 payee: '',
                                 amount: '',
                                 expenseDate: new Date().toISOString().split('T')[0],
@@ -5647,14 +6162,14 @@ export default function ServiceCenterApp() {
                       </div>
 
                       {/* Filter by Category */}
-                      <div className="flex items-center gap-2 text-xs">
+                      <div className="flex flex-wrap items-center gap-2 text-xs">
                         <select
                           value={expenseFilterCategory}
                           onChange={(e) => setExpenseFilterCategory(e.target.value)}
                           className="bg-slate-50 border border-slate-300 rounded px-2 py-1 text-slate-700 outline-none"
                         >
                           <option value="ALL">All Categories</option>
-                          {EXPENSE_CATEGORIES.map(c => (
+                          {expenseCategories.map(c => (
                             <option key={c} value={c}>{c}</option>
                           ))}
                         </select>
@@ -5679,7 +6194,7 @@ export default function ServiceCenterApp() {
                             <th className="py-2 px-3">Date</th>
                             <th className="py-2 px-3">Category</th>
                             <th className="py-2 px-3">Description</th>
-                            <th className="py-2 px-3">Payee</th>
+                            <th className="py-2 px-3">Other / Payee</th>
                             <th className="py-2 px-3">Method</th>
                             <th className="py-2 px-3 text-right">Amount (LKR)</th>
                             <th className="py-2 px-3 text-center">Status</th>
@@ -5688,6 +6203,7 @@ export default function ServiceCenterApp() {
                         </thead>
                         <tbody className="divide-y divide-slate-200">
                           {expenses
+                            .filter(e => e.payeeType !== 'Worker')
                             .filter(e => expenseFilterCategory === 'ALL' || e.category === expenseFilterCategory)
                             .filter(e => expenseFilterStatus === 'ALL' || e.status === expenseFilterStatus)
                             .map((exp) => (
@@ -5739,6 +6255,113 @@ export default function ServiceCenterApp() {
                         </tbody>
                       </table>
                     </div>
+                  </div>
+                </div>
+
+                {/* Separate Worker Expenses List with Dates & Worker Name Search */}
+                <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-3">
+                    <div>
+                      <h3 className="font-bold text-sm text-slate-900 flex items-center gap-2">
+                        <User className="w-4 h-4 text-indigo-600" />
+                        Worker Expenses Log
+                      </h3>
+                    </div>
+
+                    <div className="relative w-full sm:w-72">
+                      <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                      <input
+                        type="text"
+                        value={workerSearchQuery}
+                        onChange={(e) => setWorkerSearchQuery(e.target.value)}
+                        placeholder="Search worker by name..."
+                        className="w-full bg-slate-50 border border-slate-300 rounded-lg pl-8 pr-3 py-1.5 text-xs text-slate-800 outline-none focus:ring-1 focus:ring-indigo-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="overflow-x-auto border border-slate-200 rounded-lg">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead>
+                        <tr className="bg-slate-900 text-white font-bold uppercase text-[10px] tracking-wider">
+                          <th className="py-2.5 px-3">Date</th>
+                          <th className="py-2.5 px-3">Worker Name</th>
+                          <th className="py-2.5 px-3">Category</th>
+                          <th className="py-2.5 px-3">Description</th>
+                          <th className="py-2.5 px-3">Method</th>
+                          <th className="py-2.5 px-3 text-right">Amount (LKR)</th>
+                          <th className="py-2.5 px-3 text-center">Status</th>
+                          <th className="py-2.5 px-3 text-center">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200 bg-white">
+                        {(() => {
+                          const workerExpenses = expenses
+                            .filter(e => e.payeeType === 'Worker')
+                            .filter(e => {
+                              if (!workerSearchQuery.trim()) return true;
+                              return (e.payee || '').toLowerCase().includes(workerSearchQuery.trim().toLowerCase());
+                            });
+
+                          if (workerExpenses.length === 0) {
+                            return (
+                              <tr>
+                                <td colSpan="8" className="py-8 text-center text-slate-400">
+                                  No worker expenses recorded{workerSearchQuery ? ` matching "${workerSearchQuery}"` : ''}.
+                                </td>
+                              </tr>
+                            );
+                          }
+
+                          return workerExpenses.map((exp) => (
+                            <tr key={exp.id || exp._id} className="hover:bg-slate-50">
+                              <td className="py-2.5 px-3 font-mono text-slate-600">{exp.expenseDate}</td>
+                              <td className="py-2.5 px-3 font-bold text-indigo-700">{exp.payee || '-'}</td>
+                              <td className="py-2.5 px-3">
+                                <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded text-[10px] font-bold">
+                                  {exp.category}
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3 font-semibold text-slate-800">{exp.description}</td>
+                              <td className="py-2.5 px-3 font-mono text-slate-600">{exp.paymentMethod || 'Cash'}</td>
+                              <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-900">
+                                {Number(exp.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                              </td>
+                              <td className="py-2.5 px-3 text-center">
+                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${exp.status === 'Paid'
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : exp.status === 'Should Pay Today'
+                                    ? 'bg-rose-100 text-rose-800 animate-pulse'
+                                    : 'bg-amber-100 text-amber-800'
+                                  }`}>
+                                  {exp.status}
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3 text-center">
+                                <div className="flex items-center justify-center gap-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleEditExpense(exp)}
+                                    className="text-slate-400 hover:text-blue-600 p-1 transition cursor-pointer"
+                                    title="Edit Expense"
+                                  >
+                                    <Edit3 className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteExpense(exp.id || exp._id)}
+                                    className="text-slate-400 hover:text-rose-600 p-1 transition cursor-pointer"
+                                    title="Delete Expense"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          ));
+                        })()}
+                      </tbody>
+                    </table>
                   </div>
                 </div>
               </div>
@@ -6214,80 +6837,6 @@ export default function ServiceCenterApp() {
                       </div>
                     </div>
 
-                    {/* Summary KPI Cards for Selected Period */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                      {/* Period Total Revenue */}
-                      <div className="bg-white border-2 border-emerald-500 rounded-xl p-4 shadow-sm">
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="text-xs font-bold text-slate-500 uppercase flex items-center gap-1.5">
-                            <TrendingUp className="w-4 h-4 text-emerald-600" />
-                            Period Revenue
-                          </span>
-                          <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded">
-                            {periodFilteredServices.length} Services
-                          </span>
-                        </div>
-                        <div className="text-2xl font-black font-mono text-emerald-700">
-                          LKR {Number(periodRevenueTotal).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                        </div>
-                        <span className="text-[10px] text-slate-400 block mt-1">Vehicle service bills issued in period</span>
-                      </div>
-
-                      {/* Period Operating Expenses */}
-                      <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="text-xs font-bold text-slate-500 uppercase flex items-center gap-1.5">
-                            <TrendingDown className="w-4 h-4 text-rose-600" />
-                            Operating Expenses
-                          </span>
-                          <span className="text-[10px] bg-rose-100 text-rose-800 font-bold px-2 py-0.5 rounded">
-                            {periodFilteredExpenses.length} Entries
-                          </span>
-                        </div>
-                        <div className="text-2xl font-black font-mono text-rose-700">
-                          LKR {Number(periodOperatingExpensesTotal).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                        </div>
-                        <span className="text-[10px] text-slate-400 block mt-1">Utilities, wages, maintenance & petty cash</span>
-                      </div>
-
-                      {/* Period Supplier Payments */}
-                      <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="text-xs font-bold text-slate-500 uppercase flex items-center gap-1.5">
-                            <Truck className="w-4 h-4 text-blue-600" />
-                            Supplier Settlements
-                          </span>
-                          <span className="text-[10px] bg-blue-100 text-blue-800 font-bold px-2 py-0.5 rounded">
-                            {periodFilteredSupplierPayments.length} Payments
-                          </span>
-                        </div>
-                        <div className="text-2xl font-black font-mono text-blue-800">
-                          LKR {Number(periodSupplierPaymentsTotal).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                        </div>
-                        <span className="text-[10px] text-slate-400 block mt-1">Parts & stock invoices settled</span>
-                      </div>
-
-                      {/* Period Net Profit / Cashflow */}
-                      <div className={`rounded-xl p-4 border-2 shadow-sm ${periodNetProfit >= 0 ? 'bg-emerald-50/50 border-emerald-500' : 'bg-rose-50/50 border-rose-500'
-                        }`}>
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="text-xs font-bold text-slate-700 uppercase flex items-center gap-1.5">
-                            <DollarSign className="w-4 h-4 text-indigo-600" />
-                            Net Cashflow / Profit
-                          </span>
-                          <span className={`text-[10px] font-black px-2 py-0.5 rounded uppercase ${periodNetProfit >= 0 ? 'bg-emerald-600 text-white' : 'bg-rose-600 text-white'
-                            }`}>
-                            {periodNetProfit >= 0 ? 'Net Positive' : 'Deficit'}
-                          </span>
-                        </div>
-                        <div className={`text-2xl font-black font-mono ${periodNetProfit >= 0 ? 'text-emerald-700' : 'text-rose-700'
-                          }`}>
-                          LKR {Number(periodNetProfit).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                        </div>
-                        <span className="text-[10px] text-slate-500 block mt-1">Revenue minus (Operating + Supplier)</span>
-                      </div>
-                    </div>
-
                     {/* Detailed Itemized Ledger for Selected Period */}
                     <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
                       {/* Tabs for Ledger */}
@@ -6700,8 +7249,8 @@ export default function ServiceCenterApp() {
                       </td>
                     </tr>
                   ) : (
-                    catalogItems.map((item) => (
-                      <tr key={item.itemCode || item.id || item._id} className="hover:bg-slate-50 transition">
+                    catalogItems.map((item, itemIdx) => (
+                      <tr key={item.id || item._id || `${item.itemCode}-${itemIdx}`} className="hover:bg-slate-50 transition">
                         <td className="py-2.5 px-3 font-mono font-bold text-blue-700">{item.itemCode}</td>
                         <td className="py-2.5 px-3 font-mono text-slate-500">{item.barcode || '-'}</td>
                         <td className="py-2.5 px-3 font-bold text-slate-900">{item.description}</td>
@@ -7120,8 +7669,8 @@ export default function ServiceCenterApp() {
                   <option value="">-- Choose part to add to this service --</option>
                   {catalogItems
                     .filter(item => appendPartSupplierFilter === 'ALL' || item.supplierName === appendPartSupplierFilter)
-                    .map(item => (
-                      <option key={item.itemCode || item.id || item._id} value={item.itemCode}>
+                    .map((item, itemIdx) => (
+                      <option key={item.id || item._id || `${item.itemCode}-${itemIdx}`} value={item.id || item._id || item.itemCode}>
                         {item.supplierName ? `[${item.supplierName}] ` : '[General] '}
                         {item.description} ({item.itemCode}) — LKR {Number(item.sellingPrice || 0).toLocaleString()} (Stock: {item.qtyOnHand || 0})
                       </option>
@@ -7141,7 +7690,9 @@ export default function ServiceCenterApp() {
               </div>
 
               {appendPartSelectedCode && (() => {
-                const sel = catalogItems.find(i => i.itemCode === appendPartSelectedCode);
+                const sel = catalogItems.find(
+                  i => i.id === appendPartSelectedCode || i._id === appendPartSelectedCode || i.itemCode === appendPartSelectedCode
+                );
                 if (!sel) return null;
                 const cost = (Number(appendPartQty) || 1) * (Number(sel.sellingPrice) || 0);
                 return (

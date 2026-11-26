@@ -120,13 +120,15 @@ export async function getItems() {
   try {
     await connectToDatabase();
     if (isDbConnected()) {
-      const docs = await Item.find().sort({ itemCode: 1 }).lean();
+      const docs = await Item.find().sort({ updatedAt: -1, createdAt: -1 }).lean();
       return docs.map(d => ({ ...d, id: d._id.toString() }));
     }
   } catch (err) {
     console.warn('Fallback to memory for getItems:', err.message);
   }
-  return getMockItems().map(i => ({ ...i, id: i._id || i.id }));
+  return getMockItems()
+    .map(i => ({ ...i, id: i._id || i.id }))
+    .sort((a, b) => new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0));
 }
 
 export async function createItem(data) {
@@ -139,13 +141,25 @@ export async function createItem(data) {
     qtyOnHand: Number(data.qtyOnHand) || 0,
     costPrice: Number(data.costPrice) || 0,
     sellingPrice: Number(data.sellingPrice) || 0,
+    stockDate: (data.stockDate || '').trim(),
+    stockTime: (data.stockTime || '').trim(),
   };
 
   try {
     await connectToDatabase();
     if (isDbConnected()) {
-      const doc = await Item.create(cleanData);
-      return { ...doc.toObject(), id: doc._id.toString() };
+      try {
+        const doc = await Item.create(cleanData);
+        return { ...doc.toObject(), id: doc._id.toString() };
+      } catch (createErr) {
+        // Drop legacy unique index on itemCode if present so multiple batches of the same product can be stored
+        if (createErr?.code === 11000) {
+          await Item.collection.dropIndex('itemCode_1').catch(() => {});
+          const doc = await Item.create(cleanData);
+          return { ...doc.toObject(), id: doc._id.toString() };
+        }
+        throw createErr;
+      }
     }
   } catch (err) {
     console.warn('Fallback to memory for createItem:', err.message);

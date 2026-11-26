@@ -2,14 +2,16 @@ import mongoose from 'mongoose';
 
 const ItemSchema = new mongoose.Schema(
   {
-    itemCode: { type: String, required: true, unique: true, uppercase: true, trim: true },
+    itemCode: { type: String, required: true, index: true, uppercase: true, trim: true },
     barcode: { type: String, default: '', trim: true },
     description: { type: String, required: true, trim: true },
     supplierName: { type: String, default: '', trim: true, index: true },
     qtyOnHand: { type: Number, default: 0 },
     sellingPrice: { type: Number, default: 0 },
     costPrice: { type: Number, default: 0 },
-    category: { type: String, default: 'General', trim: true }
+    category: { type: String, default: 'General', trim: true },
+    stockDate: { type: String, default: '' },
+    stockTime: { type: String, default: '' }
   },
   {
     timestamps: true
