@@ -12,6 +12,7 @@ const EMPTY_STATE = () => ({
     jobs: [],
     suppliers: [],
     supplierInvoices: [],
+    supplierReturns: [],
     expenses: []
   },
   queue: [],

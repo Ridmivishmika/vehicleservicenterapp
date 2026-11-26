@@ -1,15 +1,17 @@
 {
-  "/icon.svg/route": "app/icon.svg/route.js",
+  "/api/database/config/route": "app/api/database/config/route.js",
   "/api/reminders/send/route": "app/api/reminders/send/route.js",
   "/api/sync/route": "app/api/sync/route.js",
-  "/api/items/route": "app/api/items/route.js",
   "/api/vehicles/route": "app/api/vehicles/route.js",
-  "/api/database/config/route": "app/api/database/config/route.js",
+  "/api/items/route": "app/api/items/route.js",
   "/api/suppliers/route": "app/api/suppliers/route.js",
   "/api/supplier-invoices/route": "app/api/supplier-invoices/route.js",
-  "/api/expenses/route": "app/api/expenses/route.js",
+  "/api/supplier-returns/route": "app/api/supplier-returns/route.js",
   "/api/financials/route": "app/api/financials/route.js",
+  "/api/expenses/route": "app/api/expenses/route.js",
   "/api/jobs/route": "app/api/jobs/route.js",
   "/api/services/route": "app/api/services/route.js",
+  "/api/services/[id]/route": "app/api/services/[id]/route.js",
+  "/api/items/[id]/route": "app/api/items/[id]/route.js",
   "/page": "app/page.js"
 }

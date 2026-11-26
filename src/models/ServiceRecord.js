@@ -62,7 +62,23 @@ const ServiceRecordSchema = new mongoose.Schema(
     reminderSentAt: { type: String, default: '' },
     status: { type: String, default: 'Invoiced' },
     parts: [ServicePartSchema],
-    items: [ServiceItemSchema]
+    items: [ServiceItemSchema],
+    returnedParts: [
+      new mongoose.Schema(
+        {
+          name: { type: String, default: '' },
+          code: { type: String, default: '' },
+          supplierName: { type: String, default: '' },
+          returnQty: { type: Number, default: 1 },
+          unitPrice: { type: Number, default: 0 },
+          refundAmount: { type: Number, default: 0 },
+          returnDate: { type: String, default: '' },
+          reason: { type: String, default: '' },
+          notes: { type: String, default: '' }
+        },
+        { _id: false }
+      )
+    ]
   },
   {
     timestamps: true

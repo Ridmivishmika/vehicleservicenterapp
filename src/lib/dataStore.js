@@ -5,6 +5,7 @@ import Item from '@/models/Item';
 import ServiceRecord from '@/models/ServiceRecord';
 import Supplier from '@/models/Supplier';
 import SupplierInvoice from '@/models/SupplierInvoice';
+import SupplierReturn from '@/models/SupplierReturn';
 import Expense from '@/models/Expense';
 import Job from '@/models/Job';
 import {
@@ -1338,6 +1339,211 @@ export async function updateExpense(id, data, { fromSync = false } = {}) {
   return updatedObj;
 }
 
+// === SUPPLIER ITEM RETURNS ===
+export async function getSupplierReturns() {
+  try {
+    await connectToDatabase();
+    if (isDbConnected()) {
+      await ensureSyncedBeforeOp();
+      const docs = await SupplierReturn.find().sort({ returnDate: -1, createdAt: -1 }).lean();
+      const result = docs.map(d => ({ ...d, id: d._id.toString() }));
+      setSnapshot('supplierReturns', result);
+      return result;
+    }
+  } catch (err) {
+    console.warn('Offline cache used for getSupplierReturns:', err.message);
+  }
+  return getSnapshot('supplierReturns').map(r => ({ ...r, id: r._id || r.id }));
+}
+
+async function applySupplierReturnEffects(cleanData, isOnline) {
+  const returnQty = Number(cleanData.returnQty) || 0;
+  const refundAmount = Number(cleanData.refundAmount) || 0;
+  const rawItemId = cleanData.itemId ? resolveOfflineId(cleanData.itemId) : '';
+  const code = (cleanData.itemCode || '').trim().toUpperCase();
+  const supplierName = (cleanData.supplierName || '').trim();
+
+  // 1. Remove or deduct item from catalog
+  if (isOnline) {
+    let doc = null;
+    if (rawItemId && mongoose.isValidObjectId(rawItemId)) {
+      doc = await Item.findById(rawItemId);
+    }
+    if (!doc && code) {
+      doc = supplierName
+        ? await Item.findOne({ itemCode: code, supplierName })
+        : await Item.findOne({ itemCode: code });
+    }
+    if (doc) {
+      const currentQty = Number(doc.qtyOnHand) || 0;
+      if (returnQty >= currentQty || currentQty <= 0) {
+        const deletedId = doc._id.toString();
+        await Item.findByIdAndDelete(doc._id);
+        removeSnapshotItem('items', deletedId);
+      } else {
+        doc.qtyOnHand = currentQty - returnQty;
+        await doc.save();
+        upsertSnapshotItem('items', { ...doc.toObject(), id: doc._id.toString() }, false);
+      }
+    }
+
+    // 2. Adjust unpaid supplier invoice balance if Deduct from Supplier Balance
+    if (refundAmount > 0 && cleanData.refundMethod === 'Deduct from Supplier Balance' && supplierName) {
+      let remainingCredit = refundAmount;
+      const openInvoices = await SupplierInvoice.find({
+        supplierName,
+        balance: { $gt: 0 }
+      }).sort({ dueDate: 1 });
+
+      for (const inv of openInvoices) {
+        if (remainingCredit <= 0) break;
+        const bal = Number(inv.balance) || 0;
+        const creditApplied = Math.min(bal, remainingCredit);
+        inv.amountPaid = Number(inv.amountPaid || 0) + creditApplied;
+        inv.balance = Math.max(0, bal - creditApplied);
+        inv.status = inv.balance <= 0 ? 'PAID' : (new Date(inv.dueDate) < new Date() ? 'OVERDUE' : 'ONGOING');
+        inv.payments.push({
+          paymentId: `RET-${String(Date.now()).slice(-5)}`,
+          paymentDate: cleanData.returnDate,
+          amount: creditApplied,
+          method: 'Cash',
+          notes: `Return Credit (${cleanData.returnNo}): ${cleanData.description}`
+        });
+        await inv.save();
+        upsertSnapshotItem('supplierInvoices', calculateOverdueMetrics({ ...inv.toObject(), id: inv._id.toString() }), false);
+        remainingCredit -= creditApplied;
+      }
+    }
+  } else {
+    mutateSnapshot('items', (list) => {
+      let idx = -1;
+      if (rawItemId) {
+        idx = list.findIndex(i => i._id === rawItemId || i.id === rawItemId || i._id === cleanData.itemId || i.id === cleanData.itemId);
+      }
+      if (idx === -1 && code) {
+        idx = list.findIndex(i => (i.itemCode || '').toUpperCase() === code && (!supplierName || i.supplierName === supplierName));
+      }
+      if (idx === -1) return list;
+      const currentQty = Number(list[idx].qtyOnHand) || 0;
+      if (returnQty >= currentQty || currentQty <= 0) {
+        return list.filter((_, i) => i !== idx);
+      }
+      const copy = [...list];
+      copy[idx] = { ...copy[idx], qtyOnHand: currentQty - returnQty, updatedAt: new Date().toISOString() };
+      return copy;
+    });
+
+    if (refundAmount > 0 && cleanData.refundMethod === 'Deduct from Supplier Balance' && supplierName) {
+      let remainingCredit = refundAmount;
+      mutateSnapshot('supplierInvoices', (list) =>
+        list.map((inv) => {
+          if (remainingCredit <= 0 || inv.supplierName !== supplierName || Number(inv.balance || 0) <= 0) {
+            return inv;
+          }
+          const bal = Number(inv.balance) || 0;
+          const creditApplied = Math.min(bal, remainingCredit);
+          remainingCredit -= creditApplied;
+          const updatedInv = {
+            ...inv,
+            amountPaid: Number(inv.amountPaid || 0) + creditApplied,
+            balance: Math.max(0, bal - creditApplied),
+            payments: [
+              ...(inv.payments || []),
+              {
+                paymentId: `RET-${String(Date.now()).slice(-5)}`,
+                paymentDate: cleanData.returnDate,
+                amount: creditApplied,
+                method: 'Cash',
+                notes: `Return Credit (${cleanData.returnNo}): ${cleanData.description}`
+              }
+            ]
+          };
+          return calculateOverdueMetrics(updatedInv);
+        })
+      );
+    }
+  }
+}
+
+export async function createSupplierReturn(data, { fromSync = false } = {}) {
+  const returnQty = Number(data.returnQty) || 1;
+  const costPrice = Number(data.costPrice) || 0;
+  const refundAmount = data.refundAmount !== undefined && data.refundAmount !== ''
+    ? Number(data.refundAmount) || 0
+    : returnQty * costPrice;
+
+  const cleanData = {
+    ...stripIds(data),
+    returnNo: data.returnNo || `RET-${String(Date.now()).slice(-5)}`,
+    returnDate: data.returnDate || new Date().toISOString().split('T')[0],
+    returnTime: data.returnTime || new Date().toTimeString().slice(0, 5),
+    itemId: data.itemId || '',
+    itemCode: (data.itemCode || '').trim().toUpperCase(),
+    barcode: (data.barcode || '').trim(),
+    description: (data.description || '').trim(),
+    supplierName: (data.supplierName || '').trim(),
+    category: (data.category || 'General').trim(),
+    stockUnit: (data.stockUnit || 'Units').trim(),
+    returnQty,
+    costPrice,
+    refundAmount,
+    reason: (data.reason || 'Old / Expired Stock').trim(),
+    refundMethod: data.refundMethod || 'Deduct from Supplier Balance',
+    notes: (data.notes || '').trim()
+  };
+
+  try {
+    await connectToDatabase();
+    if (isDbConnected()) {
+      if (!fromSync) await ensureSyncedBeforeOp();
+      const doc = await SupplierReturn.create(cleanData);
+      const created = { ...doc.toObject(), id: doc._id.toString() };
+      upsertSnapshotItem('supplierReturns', created, true);
+      await applySupplierReturnEffects(cleanData, true);
+      return created;
+    }
+  } catch (err) {
+    if (fromSync) throw err;
+    console.warn('Offline queue used for createSupplierReturn:', err.message);
+  }
+
+  const uid = generateUniqueId('ret');
+  const newObj = {
+    _id: uid,
+    id: uid,
+    ...cleanData,
+    createdAt: new Date().toISOString()
+  };
+  upsertSnapshotItem('supplierReturns', newObj, true);
+  await applySupplierReturnEffects(cleanData, false);
+  enqueueOfflineOp('createSupplierReturn', [cleanData], uid);
+  return newObj;
+}
+
+export async function deleteSupplierReturn(id, { fromSync = false } = {}) {
+  const targetId = resolveOfflineId(id);
+  try {
+    await connectToDatabase();
+    if (isDbConnected()) {
+      if (!fromSync) await ensureSyncedBeforeOp();
+      await SupplierReturn.findByIdAndDelete(targetId);
+      removeSnapshotItem('supplierReturns', id);
+      return true;
+    }
+  } catch (err) {
+    if (fromSync) throw err;
+    console.warn('Offline queue used for deleteSupplierReturn:', err.message);
+  }
+
+  const beforeLen = getSnapshot('supplierReturns').length;
+  removeSnapshotItem('supplierReturns', id);
+  const removed = getSnapshot('supplierReturns').length < beforeLen;
+  if (removed) {
+    enqueueOfflineOp('deleteSupplierReturn', [id]);
+  }
+  return removed;
+}
+
 // === OFFLINE QUEUE SYNC & ONLINE SNAPSHOT REFRESH ===
 const SYNC_HANDLERS = {
   createVehicle: (args) => createVehicle(args[0], { fromSync: true }),
@@ -1364,6 +1570,8 @@ const SYNC_HANDLERS = {
   createExpense: (args) => createExpense(args[0], { fromSync: true }),
   updateExpense: (args) => updateExpense(args[0], args[1], { fromSync: true }),
   deleteExpense: (args) => deleteExpense(args[0], { fromSync: true }),
+  createSupplierReturn: (args) => createSupplierReturn(args[0], { fromSync: true }),
+  deleteSupplierReturn: (args) => deleteSupplierReturn(args[0], { fromSync: true }),
 };
 
 export async function syncOfflineQueue({ refreshSnapshot = true } = {}) {
@@ -1414,13 +1622,14 @@ export async function syncOfflineQueue({ refreshSnapshot = true } = {}) {
       }
 
       if (refreshSnapshot) {
-        const [vDocs, iDocs, sDocs, jDocs, supDocs, invDocs, expDocs] = await Promise.all([
+        const [vDocs, iDocs, sDocs, jDocs, supDocs, invDocs, retDocs, expDocs] = await Promise.all([
           Vehicle.find().sort({ createdAt: -1 }).lean(),
           Item.find().sort({ updatedAt: -1, createdAt: -1 }).lean(),
           ServiceRecord.find().sort({ serviceDate: -1, createdAt: -1 }).lean(),
           Job.find().sort({ jobName: 1 }).lean(),
           Supplier.find().sort({ supplierName: 1 }).lean(),
           SupplierInvoice.find().sort({ dueDate: 1 }).lean(),
+          SupplierReturn.find().sort({ returnDate: -1, createdAt: -1 }).lean(),
           Expense.find().sort({ expenseDate: -1, createdAt: -1 }).lean(),
         ]);
 
@@ -1430,6 +1639,7 @@ export async function syncOfflineQueue({ refreshSnapshot = true } = {}) {
         setSnapshot('jobs', jDocs.map(d => ({ ...d, id: d._id.toString() })));
         setSnapshot('suppliers', supDocs.map(d => ({ ...d, id: d._id.toString() })));
         setSnapshot('supplierInvoices', invDocs.map(d => calculateOverdueMetrics({ ...d, id: d._id.toString() })));
+        setSnapshot('supplierReturns', retDocs.map(d => ({ ...d, id: d._id.toString() })));
         setSnapshot('expenses', expDocs.map(d => ({ ...d, id: d._id.toString() })));
       }
 
@@ -1462,10 +1672,11 @@ export async function getFinancialAnalytics() {
   const todayStr = new Date().toISOString().split('T')[0];
 
   // Fetch all live records
-  const [services, invoices, expenses] = await Promise.all([
+  const [services, invoices, expenses, supplierReturns] = await Promise.all([
     getServicesByVehicleNo(),
     getSupplierInvoices(),
-    getExpenses()
+    getExpenses(),
+    getSupplierReturns()
   ]);
 
   // 1. REVENUE CALCULATIONS
@@ -1539,8 +1750,23 @@ export async function getFinancialAnalytics() {
     }
   });
 
-  const totalExpensesPaid = supplierPaymentsMadeTotal + operatingExpensesPaidTotal;
-  const expensesPaidToday = supplierPaymentsMadeToday + operatingExpensesPaidToday;
+  // Supplier return credits (Cash Refund / Credit Note reduce net expenses)
+  let totalReturnsCredit = 0;
+  let cashReturnsCredit = 0;
+  let cashReturnsToday = 0;
+  supplierReturns.forEach(ret => {
+    const amt = Number(ret.refundAmount) || 0;
+    totalReturnsCredit += amt;
+    if (ret.refundMethod !== 'Deduct from Supplier Balance') {
+      cashReturnsCredit += amt;
+      if (ret.returnDate === todayStr) {
+        cashReturnsToday += amt;
+      }
+    }
+  });
+
+  const totalExpensesPaid = Math.max(0, supplierPaymentsMadeTotal + operatingExpensesPaidTotal - cashReturnsCredit);
+  const expensesPaidToday = Math.max(0, supplierPaymentsMadeToday + operatingExpensesPaidToday - cashReturnsToday);
   const netOperatingProfit = totalRevenue - totalExpensesPaid;
 
   // Sort attention reminders: Overdue first, then largest balance
@@ -1555,6 +1781,7 @@ export async function getFinancialAnalytics() {
     supplierPayablesTotal,
     totalExpensesPaid,
     expensesPaidToday,
+    totalReturnsCredit,
     netOperatingProfit,
     paymentsRequiringAttentionToday,
     recentServicesCount: services.length,

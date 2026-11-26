@@ -44,7 +44,11 @@ import {
   CalendarCheck,
   BellRing,
   Info,
-  Mail
+  Mail,
+  Lock,
+  LogOut,
+  EyeOff,
+  RotateCcw
 } from 'lucide-react';
 
 // Standard Service Package Definitions (Inspection & Service Checklist Options)
@@ -140,6 +144,52 @@ const ALL_CHECKLIST_OPTIONS = [
 ];
 
 export default function ServiceCenterApp() {
+  // Dummy Login State
+  const [authChecked, setAuthChecked] = useState(false);
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [loginUsername, setLoginUsername] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
+  const [loginError, setLoginError] = useState('');
+
+  useEffect(() => {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage.getItem('autocare_dummy_auth') === '1') {
+        setIsLoggedIn(true);
+      }
+    } catch {
+      // ignore storage errors
+    } finally {
+      setAuthChecked(true);
+    }
+  }, []);
+
+  const handleDummyLogin = (e) => {
+    e.preventDefault();
+    if (loginUsername.trim().toLowerCase() === 'admin' && loginPassword === '1234') {
+      try {
+        window.localStorage.setItem('autocare_dummy_auth', '1');
+      } catch {
+        // ignore storage errors
+      }
+      setLoginError('');
+      setIsLoggedIn(true);
+    } else {
+      setLoginError('Invalid username or password. Use admin / 1234.');
+    }
+  };
+
+  const handleDummyLogout = () => {
+    try {
+      window.localStorage.removeItem('autocare_dummy_auth');
+    } catch {
+      // ignore storage errors
+    }
+    setIsLoggedIn(false);
+    setLoginPassword('');
+    setLoginError('');
+  };
+
   // Navigation Tabs: Only 4 Main Tabs (Vehicle Registration | Service | Suppliers | Expenses)
   const [activeTab, setActiveTab] = useState('Cs/Vehicle');
   const [expenseSubTab, setExpenseSubTab] = useState('expenses'); // 'expenses' | 'pay_today' | 'analysis'
@@ -218,12 +268,34 @@ export default function ServiceCenterApp() {
   const [appendPartSelectedCode, setAppendPartSelectedCode] = useState('');
   const [appendPartSupplierFilter, setAppendPartSupplierFilter] = useState('ALL');
   const [appendPartQty, setAppendPartQty] = useState(1);
+  const [customerReturnModal, setCustomerReturnModal] = useState(null);
 
   // Suppliers & Invoices state
   const [suppliers, setSuppliers] = useState([]);
   const [supplierInvoices, setSupplierInvoices] = useState([]);
+  const [supplierReturns, setSupplierReturns] = useState([]);
   const [loadingSuppliers, setLoadingSuppliers] = useState(true);
-  const [supplierSubTab, setSupplierSubTab] = useState('register'); // 'register' | 'items' | 'add_invoice' | 'tracker' | 'payments'
+  const [supplierSubTab, setSupplierSubTab] = useState('register'); // 'register' | 'items' | 'add_invoice' | 'tracker' | 'payments' | 'returns'
+  const emptyReturnForm = {
+    itemId: '',
+    supplierName: '',
+    itemCode: '',
+    barcode: '',
+    description: '',
+    category: 'General',
+    stockUnit: 'Units',
+    availableQty: 0,
+    returnQty: 1,
+    costPrice: 0,
+    refundAmount: '',
+    returnDate: new Date().toISOString().split('T')[0],
+    returnTime: new Date().toTimeString().slice(0, 5),
+    reason: 'Old / Expired Stock',
+    refundMethod: 'Deduct from Supplier Balance',
+    notes: ''
+  };
+  const [returnItemForm, setReturnItemForm] = useState(emptyReturnForm);
+  const [showSupplierReturnModal, setShowSupplierReturnModal] = useState(false);
   const [supplierFilterStatus, setSupplierFilterStatus] = useState('ALL'); // 'ALL' | 'OVERDUE' | 'ONGOING' | 'PAID'
   const [supplierSearchQuery, setSupplierSearchQuery] = useState('');
   const [registerItemSupplierSearch, setRegisterItemSupplierSearch] = useState('');
@@ -455,7 +527,7 @@ export default function ServiceCenterApp() {
     amount: '',
     expenseDate: new Date().toISOString().split('T')[0],
     dueDate: new Date().toISOString().split('T')[0],
-    txnType: 'Expense',
+    txnType: 'Staff - Advance',
     paymentMethod: 'Cash',
     status: 'Should Pay Today',
     notes: ''
@@ -469,6 +541,7 @@ export default function ServiceCenterApp() {
     loadCatalogItems();
     loadSuppliers();
     loadSupplierInvoices();
+    loadSupplierReturns();
     loadFinancials();
     loadExpenses();
     loadJobs();
@@ -782,7 +855,7 @@ export default function ServiceCenterApp() {
           amount: '',
           expenseDate: new Date().toISOString().split('T')[0],
           dueDate: new Date().toISOString().split('T')[0],
-          txnType: 'Expense',
+          txnType: 'Staff - Advance',
           paymentMethod: 'Cash',
           status: 'Should Pay Today',
           notes: ''
@@ -940,6 +1013,7 @@ export default function ServiceCenterApp() {
         loadCatalogItems(),
         loadSuppliers(),
         loadSupplierInvoices(),
+        loadSupplierReturns(),
         loadFinancials(),
         loadExpenses()
       ]);
@@ -1445,25 +1519,25 @@ export default function ServiceCenterApp() {
           })),
           ...(Array.isArray(serviceForm.selectedServices) && serviceForm.selectedServices.length > 0
             ? serviceForm.selectedServices.map((srv, idx) => ({
-                no: serviceForm.parts.length + idx + 1,
-                code: srv.jobCode || `JOB-${idx + 1}`,
-                description: srv.jobName,
-                qty: 1,
-                rate: Number(srv.laborFee) || 0,
-                dis: 0,
-                amount: Number(srv.laborFee) || 0,
-                itemType: 'job'
-              }))
+              no: serviceForm.parts.length + idx + 1,
+              code: srv.jobCode || `JOB-${idx + 1}`,
+              description: srv.jobName,
+              qty: 1,
+              rate: Number(srv.laborFee) || 0,
+              dis: 0,
+              amount: Number(srv.laborFee) || 0,
+              itemType: 'job'
+            }))
             : [{
-                no: serviceForm.parts.length + 1,
-                code: 'JOB-SVC-FEE',
-                description: `${serviceForm.serviceType} Base Labor & Safety Inspection Fee`,
-                qty: 1,
-                rate: serviceLaborCharge,
-                dis: 0,
-                amount: serviceLaborCharge,
-                itemType: 'job'
-              }])
+              no: serviceForm.parts.length + 1,
+              code: 'JOB-SVC-FEE',
+              description: `${serviceForm.serviceType} Base Labor & Safety Inspection Fee`,
+              qty: 1,
+              rate: serviceLaborCharge,
+              dis: 0,
+              amount: serviceLaborCharge,
+              itemType: 'job'
+            }])
         ]
       };
 
@@ -1934,34 +2008,34 @@ export default function ServiceCenterApp() {
     try {
       const res = isInitialUnstocked
         ? await fetch(`/api/items/${targetItem.id || targetItem._id}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              costPrice: Number(stockEntryForm.costPrice) || 0,
-              sellingPrice: Number(stockEntryForm.sellingPrice) || 0,
-              qtyOnHand: addedQty,
-              stockUnit: finalStockUnit,
-              stockDate,
-              stockTime
-            })
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            costPrice: Number(stockEntryForm.costPrice) || 0,
+            sellingPrice: Number(stockEntryForm.sellingPrice) || 0,
+            qtyOnHand: addedQty,
+            stockUnit: finalStockUnit,
+            stockDate,
+            stockTime
           })
+        })
         : await fetch('/api/items', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              itemCode: targetItem.itemCode,
-              barcode: targetItem.barcode || '',
-              description: targetItem.description,
-              supplierName: targetItem.supplierName || '',
-              category: targetItem.category || 'General',
-              costPrice: Number(stockEntryForm.costPrice) || 0,
-              sellingPrice: Number(stockEntryForm.sellingPrice) || 0,
-              qtyOnHand: addedQty,
-              stockUnit: finalStockUnit,
-              stockDate,
-              stockTime
-            })
-          });
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            itemCode: targetItem.itemCode,
+            barcode: targetItem.barcode || '',
+            description: targetItem.description,
+            supplierName: targetItem.supplierName || '',
+            category: targetItem.category || 'General',
+            costPrice: Number(stockEntryForm.costPrice) || 0,
+            sellingPrice: Number(stockEntryForm.sellingPrice) || 0,
+            qtyOnHand: addedQty,
+            stockUnit: finalStockUnit,
+            stockDate,
+            stockTime
+          })
+        });
       const json = await res.json();
       if (json.success) {
         showNotification(
@@ -2057,6 +2131,249 @@ export default function ServiceCenterApp() {
   const handleCancelInlineItemEdit = () => {
     setEditingItemRowId(null);
     setEditingItemRowData({});
+  };
+
+  const handleOpenCustomerPartReturn = (srv, partIndex, part) => {
+    const qty = Number(part.quantity || part.qty || 1);
+    setCustomerReturnModal({
+      serviceRecord: srv,
+      partIndex,
+      part,
+      maxQty: qty,
+      returnQty: qty,
+      restoreStock: true,
+      reason: 'Customer Returned',
+      notes: ''
+    });
+  };
+
+  const handleSubmitCustomerPartReturn = async (e) => {
+    e.preventDefault();
+    if (!customerReturnModal) return;
+    const { serviceRecord, partIndex, part, maxQty, returnQty, restoreStock, reason, notes } = customerReturnModal;
+    const retQty = Math.min(maxQty, Math.max(1, Number(returnQty) || 1));
+    const unitPrice = Number(part.unitPrice || part.rate || 0);
+    const refundAmount = retQty * unitPrice;
+    const remainingQty = maxQty - retQty;
+
+    const existingParts = serviceRecord.parts || (serviceRecord.items ? serviceRecord.items.filter(i => i.itemType === 'item') : []);
+    const updatedParts = existingParts
+      .map((p, idx) => {
+        if (idx !== partIndex) return p;
+        if (remainingQty <= 0) return null;
+        return {
+          ...p,
+          quantity: remainingQty,
+          total: remainingQty * unitPrice
+        };
+      })
+      .filter(Boolean);
+
+    const newPartsTotal = updatedParts.reduce((s, p) => s + (Number(p.total || ((p.quantity || p.qty || 1) * (p.unitPrice || p.rate || 0))) || 0), 0);
+    const jobLines = (serviceRecord.items || []).filter(i => i.itemType === 'job');
+    const labor = Number(serviceRecord.jobTotal || serviceRecord.laborCharges || 0);
+    const dis = Number(serviceRecord.totalDis || serviceRecord.discount || 0);
+    const newTotalAmount = labor + newPartsTotal;
+    const newGrandTotal = Math.max(0, newTotalAmount - dis);
+
+    const updatedItems = [
+      ...updatedParts.map((p, i) => ({
+        no: i + 1,
+        code: p.code || `ITEM-${i + 1}`,
+        supplierName: p.supplier || p.supplierName || 'General',
+        description: p.name || p.description,
+        qty: Number(p.quantity || p.qty || 1),
+        rate: Number(p.unitPrice || p.rate || 0),
+        dis: 0,
+        amount: Number(p.total || p.amount || 0),
+        itemType: 'item'
+      })),
+      ...(jobLines.length > 0
+        ? jobLines.map((j, idx) => ({ ...j, no: updatedParts.length + idx + 1 }))
+        : [{
+            no: updatedParts.length + 1,
+            code: 'JOB-SVC-FEE',
+            description: `${serviceRecord.serviceType || 'Service'} Base Labor & Safety Inspection Fee`,
+            qty: 1,
+            rate: labor,
+            dis: 0,
+            amount: labor,
+            itemType: 'job'
+          }])
+    ];
+
+    const newReturnEntry = {
+      name: part.name || part.description || 'Item',
+      code: part.code || '',
+      supplierName: part.supplierName || part.supplier || 'General',
+      returnQty: retQty,
+      unitPrice,
+      refundAmount,
+      returnDate: todayStr,
+      reason,
+      notes
+    };
+    const updatedReturnedParts = [...(serviceRecord.returnedParts || []), newReturnEntry];
+    const returnNote = `[Customer Return: ${retQty}x ${newReturnEntry.name} - ${reason}${notes ? ` (${notes})` : ''}]`;
+    const updatedNotes = serviceRecord.technicianNotes ? `${serviceRecord.technicianNotes} | ${returnNote}` : returnNote;
+
+    try {
+      const res = await fetch(`/api/services/${encodeURIComponent(serviceRecord._id || serviceRecord.id)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          parts: updatedParts,
+          items: updatedItems,
+          returnedParts: updatedReturnedParts,
+          partsTotal: newPartsTotal,
+          totalAmount: newTotalAmount,
+          grandTotal: newGrandTotal,
+          billTotal: newGrandTotal,
+          technicianNotes: updatedNotes
+        })
+      });
+      const json = await res.json();
+      if (json.success) {
+        if (restoreStock) {
+          const code = (part.code || '').trim().toUpperCase();
+          const sup = (part.supplierName || part.supplier || '').trim();
+          const matchItem = catalogItems.find(i =>
+            (part.itemId && (i.id === part.itemId || i._id === part.itemId)) ||
+            (code && (i.itemCode || '').toUpperCase() === code && (!sup || sup === 'General' || i.supplierName === sup)) ||
+            (code && (i.itemCode || '').toUpperCase() === code)
+          );
+          if (matchItem) {
+            await fetch(`/api/items/${encodeURIComponent(matchItem.id || matchItem._id)}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                qtyOnHand: (Number(matchItem.qtyOnHand) || 0) + retQty
+              })
+            });
+          }
+        }
+
+        // Also log refund in Operating Expenses so Expenses reflects the customer return
+        if (refundAmount > 0) {
+          await fetch('/api/expenses', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              txnType: 'Customer Return Refund',
+              category: 'Customer Return',
+              payeeType: 'Other',
+              payee: `${serviceRecord.vehicleNo}${serviceRecord.csName ? ` (${serviceRecord.csName})` : ''}`,
+              description: `Customer Return: ${retQty}x ${newReturnEntry.name} (Bill #${serviceRecord.invoiceNo || ''})`,
+              amount: refundAmount,
+              expenseDate: todayStr,
+              dueDate: todayStr,
+              paymentMethod: 'Cash',
+              status: 'Paid',
+              notes: `${reason}${notes ? ` - ${notes}` : ''}`
+            })
+          });
+        }
+
+        showNotification(`Updated service bill, logged expense refund & ${restoreStock ? 'restored stock' : 'recorded return'} for ${retQty}x "${newReturnEntry.name}"!`);
+        setCustomerReturnModal(null);
+        await Promise.all([
+          fetchServiceHistory(selectedServiceVehicleNo),
+          loadAllServices(),
+          loadCatalogItems(),
+          loadExpenses(),
+          loadFinancials(),
+          fetchSyncStatus()
+        ]);
+      } else {
+        showNotification(json.message || 'Failed to update service record', 'error');
+      }
+    } catch (err) {
+      showNotification('Error processing customer return: ' + err.message, 'error');
+    }
+  };
+
+  const loadSupplierReturns = async () => {
+    try {
+      const res = await fetch('/api/supplier-returns');
+      const json = await res.json();
+      if (json.success && Array.isArray(json.data)) {
+        setSupplierReturns(json.data);
+      }
+    } catch (err) {
+      console.error('Failed to load supplier returns:', err);
+    }
+  };
+
+  const handleOpenItemReturn = (item) => {
+    const qty = Number(item.qtyOnHand) || 1;
+    const cost = Number(item.costPrice) || 0;
+    setReturnItemForm({
+      itemId: item.id || item._id || '',
+      supplierName: item.supplierName || 'General',
+      itemCode: item.itemCode || '',
+      barcode: item.barcode || '',
+      description: item.description || '',
+      category: item.category || 'General',
+      stockUnit: item.stockUnit || 'Units',
+      availableQty: Number(item.qtyOnHand) || 0,
+      returnQty: qty,
+      costPrice: cost,
+      refundAmount: String(qty * cost),
+      returnDate: new Date().toISOString().split('T')[0],
+      returnTime: new Date().toTimeString().slice(0, 5),
+      reason: 'Old / Expired Stock',
+      refundMethod: 'Deduct from Supplier Balance',
+      notes: ''
+    });
+    setShowSupplierReturnModal(true);
+  };
+
+  const handleSubmitSupplierReturn = async (e) => {
+    e.preventDefault();
+    if (!returnItemForm.description.trim() || !returnItemForm.supplierName.trim()) {
+      showNotification('Please select an item and supplier to return.', 'error');
+      return;
+    }
+    try {
+      const res = await fetch('/api/supplier-returns', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(returnItemForm)
+      });
+      const json = await res.json();
+      if (json.success) {
+        showNotification(`Returned "${returnItemForm.description}" to ${returnItemForm.supplierName} & updated stock/expenses!`);
+        setShowSupplierReturnModal(false);
+        setReturnItemForm(emptyReturnForm);
+        await Promise.all([
+          loadCatalogItems(),
+          loadSupplierReturns(),
+          loadSupplierInvoices(),
+          loadFinancials(),
+          fetchSyncStatus()
+        ]);
+      } else {
+        showNotification(json.message || 'Failed to record return', 'error');
+      }
+    } catch (err) {
+      showNotification('Error recording return: ' + err.message, 'error');
+    }
+  };
+
+  const handleDeleteSupplierReturn = async (id) => {
+    if (!confirm('Delete this return log record?')) return;
+    try {
+      const res = await fetch(`/api/supplier-returns/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      const json = await res.json();
+      if (json.success) {
+        showNotification('Return record deleted');
+        await Promise.all([loadSupplierReturns(), loadFinancials()]);
+      } else {
+        showNotification(json.message || 'Failed to delete return record', 'error');
+      }
+    } catch (err) {
+      showNotification('Error: ' + err.message, 'error');
+    }
   };
 
   const handleQuickAddPartToService = () => {
@@ -2301,6 +2618,104 @@ export default function ServiceCenterApp() {
   const periodTotalExpenses = periodOperatingExpensesTotal + periodSupplierPaymentsTotal;
   const periodNetProfit = periodRevenueTotal - periodTotalExpenses;
 
+  if (!authChecked) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center text-white text-sm font-bold">
+        Loading AUTO CARE SERVICE CENTER...
+      </div>
+    );
+  }
+
+  if (!isLoggedIn) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center px-4 py-8">
+        <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
+          <div className="bg-slate-950 text-white px-6 py-5 flex items-center gap-3 border-b border-slate-800">
+            <div className="bg-blue-600 p-2.5 rounded-xl shadow-md shadow-blue-500/20">
+              <Wrench className="w-5 h-5" />
+            </div>
+            <div>
+              <h1 className="text-base font-black tracking-wider uppercase">AUTO CARE SERVICE CENTER</h1>
+              <p className="text-[11px] text-slate-400">Sign in to access the service center system</p>
+            </div>
+          </div>
+
+          <form onSubmit={handleDummyLogin} className="p-6 space-y-4 text-xs">
+            {loginError && (
+              <div className="bg-rose-50 border border-rose-200 text-rose-700 px-3 py-2 rounded-lg font-semibold flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{loginError}</span>
+              </div>
+            )}
+
+            <div>
+              <label className="block font-bold text-slate-700 mb-1">Username</label>
+              <div className="relative">
+                <User className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  type="text"
+                  value={loginUsername}
+                  onChange={(e) => setLoginUsername(e.target.value)}
+                  placeholder="Enter username (admin)"
+                  className="w-full bg-slate-50 border border-slate-300 rounded-lg pl-9 pr-3 py-2.5 text-sm text-slate-900 font-semibold outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white"
+                  required
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block font-bold text-slate-700 mb-1">Password</label>
+              <div className="relative">
+                <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  type={showLoginPassword ? 'text' : 'password'}
+                  value={loginPassword}
+                  onChange={(e) => setLoginPassword(e.target.value)}
+                  placeholder="Enter password (1234)"
+                  className="w-full bg-slate-50 border border-slate-300 rounded-lg pl-9 pr-9 py-2.5 text-sm text-slate-900 font-semibold outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white"
+                  required
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowLoginPassword((prev) => !prev)}
+                  className="text-slate-400 hover:text-slate-700 absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer"
+                  title={showLoginPassword ? 'Hide password' : 'Show password'}
+                >
+                  {showLoginPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded-lg text-sm transition shadow-sm cursor-pointer"
+            >
+              Sign In
+            </button>
+
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 flex items-center justify-between gap-2">
+              <div className="text-[11px] text-blue-900">
+                <div><span className="font-semibold">Demo Username:</span> <code className="font-mono font-bold">admin</code></div>
+                <div><span className="font-semibold">Demo Password:</span> <code className="font-mono font-bold">1234</code></div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setLoginUsername('admin');
+                  setLoginPassword('1234');
+                  setLoginError('');
+                }}
+                className="bg-white hover:bg-blue-100 text-blue-700 border border-blue-300 font-bold px-2.5 py-1.5 rounded text-[11px] cursor-pointer shrink-0"
+              >
+                Fill Demo
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-100 text-slate-800 pb-20 overflow-x-hidden">
       {/* Top Application Header */}
@@ -2322,11 +2737,10 @@ export default function ServiceCenterApp() {
               type="button"
               onClick={() => setShowDbConfigModal(true)}
               title="Database Connection Settings"
-              className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold flex items-center gap-1.5 border transition cursor-pointer ${
-                dbStatus.connected
-                  ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300 hover:bg-emerald-900/60'
-                  : 'bg-amber-950/60 border-amber-500/40 text-amber-300 hover:bg-amber-900/60'
-              }`}
+              className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold flex items-center gap-1.5 border transition cursor-pointer ${dbStatus.connected
+                ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300 hover:bg-emerald-900/60'
+                : 'bg-amber-950/60 border-amber-500/40 text-amber-300 hover:bg-amber-900/60'
+                }`}
             >
               <span className={`w-2 h-2 rounded-full ${dbStatus.connected ? 'bg-emerald-400' : 'bg-amber-400'}`}></span>
               <span>{dbStatus.connected ? 'ONLINE' : 'OFFLINE CACHE'}</span>
@@ -2346,6 +2760,16 @@ export default function ServiceCenterApp() {
             >
               <RefreshCw className={`w-3.5 h-3.5 ${syncStatus.syncing ? 'animate-spin' : ''}`} />
               <span>{syncStatus.syncing ? 'Syncing...' : 'Sync Now'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleDummyLogout}
+              title="Logout"
+              className="bg-slate-800 hover:bg-rose-600 text-slate-200 hover:text-white px-2.5 py-1.5 rounded-lg text-[11px] font-bold flex items-center gap-1 transition cursor-pointer border border-slate-700"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Logout</span>
             </button>
           </div>
         </div>
@@ -2487,6 +2911,18 @@ export default function ServiceCenterApp() {
                     {allRecordedPayments.length}
                   </span>
                 )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setSupplierSubTab('returns')}
+                className={`px-3.5 py-2 rounded-lg text-xs font-bold transition flex items-center gap-2 cursor-pointer ${supplierSubTab === 'returns'
+                  ? 'bg-amber-600 text-white shadow-sm'
+                  : 'bg-slate-800/80 text-slate-300 hover:text-white hover:bg-slate-800'
+                  }`}
+              >
+                <RotateCcw className="w-4 h-4" />
+                6. Returned Items ({supplierReturns.length})
               </button>
             </div>
 
@@ -2867,9 +3303,8 @@ export default function ServiceCenterApp() {
                                           setItemForm({ ...itemForm, supplierName: s.supplierName });
                                           setRegisterItemSupplierSearch('');
                                         }}
-                                        className={`w-full text-left px-3 py-2 text-xs hover:bg-indigo-50 flex items-center justify-between cursor-pointer ${
-                                          itemForm.supplierName === s.supplierName ? 'bg-indigo-50 font-bold text-indigo-800' : 'text-slate-800'
-                                        }`}
+                                        className={`w-full text-left px-3 py-2 text-xs hover:bg-indigo-50 flex items-center justify-between cursor-pointer ${itemForm.supplierName === s.supplierName ? 'bg-indigo-50 font-bold text-indigo-800' : 'text-slate-800'
+                                          }`}
                                       >
                                         <span className="font-semibold">{s.supplierName}</span>
                                         {s.telephone && <span className="text-[10px] text-slate-400 font-mono">{s.telephone}</span>}
@@ -3049,9 +3484,8 @@ export default function ServiceCenterApp() {
                                             sellingPrice: ''
                                           });
                                         }}
-                                        className={`w-full text-left px-3 py-2 text-xs hover:bg-blue-50 flex items-center justify-between cursor-pointer ${
-                                          stockEntrySupplierFilter === s.supplierName ? 'bg-blue-50 font-bold text-blue-800' : 'text-slate-800'
-                                        }`}
+                                        className={`w-full text-left px-3 py-2 text-xs hover:bg-blue-50 flex items-center justify-between cursor-pointer ${stockEntrySupplierFilter === s.supplierName ? 'bg-blue-50 font-bold text-blue-800' : 'text-slate-800'
+                                          }`}
                                       >
                                         <span className="font-semibold">{s.supplierName}</span>
                                         {s.telephone && <span className="text-[10px] text-slate-400 font-mono">{s.telephone}</span>}
@@ -3153,9 +3587,8 @@ export default function ServiceCenterApp() {
                                           });
                                           setStockEntryItemSearch('');
                                         }}
-                                        className={`w-full text-left px-3 py-2 text-xs hover:bg-blue-50 flex items-center justify-between gap-2 cursor-pointer ${
-                                          stockEntryForm.selectedItemId === (it.id || it._id) ? 'bg-blue-50 font-bold text-blue-800' : 'text-slate-800'
-                                        }`}
+                                        className={`w-full text-left px-3 py-2 text-xs hover:bg-blue-50 flex items-center justify-between gap-2 cursor-pointer ${stockEntryForm.selectedItemId === (it.id || it._id) ? 'bg-blue-50 font-bold text-blue-800' : 'text-slate-800'
+                                          }`}
                                       >
                                         <span className="truncate">
                                           <span className="font-mono font-bold text-blue-700">{it.itemCode}</span> — {it.description}
@@ -3566,6 +3999,15 @@ export default function ServiceCenterApp() {
                                     >
                                       <Edit3 className="w-3 h-3" />
                                       Edit
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenItemReturn(item)}
+                                      className="bg-amber-50 hover:bg-amber-100 text-amber-800 font-bold px-2 py-1 rounded text-xs transition flex items-center gap-1 cursor-pointer"
+                                      title="Return old/damaged item to supplier"
+                                    >
+                                      <RotateCcw className="w-3 h-3" />
+                                      Return
                                     </button>
                                     <button
                                       type="button"
@@ -4129,6 +4571,87 @@ export default function ServiceCenterApp() {
                                     <Trash2 className="w-3.5 h-3.5" />
                                   </button>
                                 </div>
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* =========================================================================
+                  SUB-VIEW 6: SUPPLIER ITEM RETURNS (OLD / DAMAGED STOCK RETURN & EXPENSE ADJUSTMENT)
+                  ========================================================================= */}
+              {supplierSubTab === 'returns' && (
+                <div className="p-4 sm:p-6 space-y-6">
+                  <div className="border-b border-slate-200 pb-3 flex flex-wrap items-center justify-between gap-2">
+                    <h3 className="font-bold text-base text-slate-900 flex items-center gap-2">
+                      <RotateCcw className="w-5 h-5 text-amber-600" />
+                      Supplier Item Returns (Old / Damaged Stock)
+                    </h3>
+                    <span className="text-xs font-mono font-bold text-amber-800 bg-amber-50 border border-amber-200 px-3 py-1 rounded-lg">
+                      Total Returned Credit: LKR {supplierReturns.reduce((s, r) => s + (Number(r.refundAmount) || 0), 0).toLocaleString()}
+                    </span>
+                  </div>
+
+                  {/* Returned Items Log Table */}
+                  <div className="overflow-x-auto border border-slate-200 rounded-lg">
+                    <table className="w-full text-left text-xs border-collapse min-w-[750px]">
+                      <thead>
+                        <tr className="bg-slate-900 text-white font-mono text-[11px] uppercase tracking-wider">
+                          <th className="py-2.5 px-3">Date &amp; Time</th>
+                          <th className="py-2.5 px-3">Return No</th>
+                          <th className="py-2.5 px-3">Supplier</th>
+                          <th className="py-2.5 px-3">Item</th>
+                          <th className="py-2.5 px-3 text-center">Returned Qty</th>
+                          <th className="py-2.5 px-3">Reason</th>
+                          <th className="py-2.5 px-3">Adjustment</th>
+                          <th className="py-2.5 px-3 text-right">Credit (LKR)</th>
+                          <th className="py-2.5 px-3 text-center">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200 bg-white">
+                        {supplierReturns.length === 0 ? (
+                          <tr>
+                            <td colSpan="9" className="py-8 text-center text-slate-400">
+                              No supplier item returns recorded yet. Click &quot;Return&quot; on any item in the Supplier Items catalog.
+                            </td>
+                          </tr>
+                        ) : (
+                          supplierReturns.map((ret) => (
+                            <tr key={ret.id || ret._id || ret.returnNo} className="hover:bg-slate-50">
+                              <td className="py-2.5 px-3 font-mono text-slate-600">
+                                {ret.returnDate} {ret.returnTime || ''}
+                              </td>
+                              <td className="py-2.5 px-3 font-mono font-bold text-amber-700">{ret.returnNo}</td>
+                              <td className="py-2.5 px-3 font-semibold text-slate-800">{ret.supplierName}</td>
+                              <td className="py-2.5 px-3">
+                                <span className="font-bold text-slate-900">{ret.description}</span>
+                                {ret.itemCode && <span className="ml-1.5 font-mono text-[10px] text-blue-700">({ret.itemCode})</span>}
+                              </td>
+                              <td className="py-2.5 px-3 text-center font-mono font-bold text-slate-800">
+                                {ret.returnQty} {ret.stockUnit || ''}
+                              </td>
+                              <td className="py-2.5 px-3 text-slate-600">{ret.reason}</td>
+                              <td className="py-2.5 px-3">
+                                <span className="bg-amber-50 text-amber-800 border border-amber-200 px-2 py-0.5 rounded text-[10px] font-bold">
+                                  {ret.refundMethod}
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3 text-right font-mono font-bold text-emerald-700">
+                                LKR {Number(ret.refundAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                              </td>
+                              <td className="py-2.5 px-3 text-center">
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteSupplierReturn(ret.id || ret._id)}
+                                  className="text-slate-400 hover:text-rose-600 p-1 cursor-pointer"
+                                  title="Delete Return Record"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
                               </td>
                             </tr>
                           ))
@@ -5740,10 +6263,23 @@ export default function ServiceCenterApp() {
                                     {usedParts.map((p, pIdx) => (
                                       <tr key={`part-${pIdx}`} className="hover:bg-slate-50">
                                         <td className="py-2 px-4 text-slate-700">
-                                          <span className="font-semibold text-slate-900">{p.name || p.description}</span>
-                                          <span className="text-slate-400 ml-1.5 font-mono text-[11px]">
-                                            ({p.quantity || p.qty || 1}x @ LKR {Number(p.unitPrice || p.rate || 0).toLocaleString()})
-                                          </span>
+                                          <div className="flex flex-wrap items-center justify-between gap-2">
+                                            <div>
+                                              <span className="font-semibold text-slate-900">{p.name || p.description}</span>
+                                              <span className="text-slate-400 ml-1.5 font-mono text-[11px]">
+                                                ({p.quantity || p.qty || 1}x @ LKR {Number(p.unitPrice || p.rate || 0).toLocaleString()})
+                                              </span>
+                                            </div>
+                                            <button
+                                              type="button"
+                                              onClick={() => handleOpenCustomerPartReturn(srv, pIdx, p)}
+                                              className="bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 cursor-pointer"
+                                              title="Customer returning this item — update service bill, log expense & restore stock"
+                                            >
+                                              <RotateCcw className="w-2.5 h-2.5" />
+                                              Return Item
+                                            </button>
+                                          </div>
                                         </td>
                                         <td className="py-2 px-4 text-right font-mono font-bold text-slate-800">
                                           {Number(p.total || p.amount || 0).toLocaleString()}
@@ -5763,6 +6299,29 @@ export default function ServiceCenterApp() {
                                   </tfoot>
                                 </table>
                               </div>
+
+                              {/* Returned Items History */}
+                              {Array.isArray(srv.returnedParts) && srv.returnedParts.length > 0 && (
+                                <div className="bg-amber-50/70 border-t border-amber-200 px-4 py-2 space-y-1 text-xs">
+                                  <div className="text-[10px] font-black uppercase tracking-wider text-amber-800 flex items-center gap-1">
+                                    <RotateCcw className="w-3 h-3" />
+                                    Returned Items ({srv.returnedParts.length})
+                                  </div>
+                                  {srv.returnedParts.map((ret, rIdx) => (
+                                    <div key={rIdx} className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-amber-950">
+                                      <span>
+                                        <strong>{ret.returnQty}x {ret.name}</strong>
+                                        <span className="text-amber-700 ml-1.5">
+                                          ({ret.returnDate} • {ret.reason}{ret.notes ? ` — ${ret.notes}` : ''})
+                                        </span>
+                                      </span>
+                                      <span className="font-mono font-bold text-rose-700">
+                                        - LKR {Number(ret.refundAmount || 0).toLocaleString()}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
 
                               {/* Row 3: Handled By & Payment, Next Recommended, Actions */}
                               <div className="bg-slate-50 border-t border-slate-200 px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs">
@@ -6272,6 +6831,19 @@ export default function ServiceCenterApp() {
 
                     <form onSubmit={handleSaveExpense} className="space-y-3 text-xs">
                       <div>
+                        <label className="block font-bold text-slate-700 mb-1">Txn Type *</label>
+                        <select
+                          value={newExpenseData.txnType || 'Staff - Advance'}
+                          onChange={(e) => setNewExpenseData({ ...newExpenseData, txnType: e.target.value })}
+                          className="w-full bg-white border border-slate-300 rounded px-2.5 py-1.5 text-slate-800 outline-none focus:ring-1 focus:ring-blue-500 font-semibold"
+                        >
+                          {['Staff - Advance', 'Staff - Commission', 'Auto Care - Maintenance', 'Bank Deposit', 'Other'].map(t => (
+                            <option key={t} value={t}>{t}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
                         <label className="block font-bold text-slate-700 mb-1">Expense Category *</label>
                         <select
                           value={newExpenseData.category}
@@ -6311,11 +6883,10 @@ export default function ServiceCenterApp() {
                               key={type}
                               type="button"
                               onClick={() => setNewExpenseData({ ...newExpenseData, payeeType: type })}
-                              className={`py-1.5 rounded text-xs font-bold border transition cursor-pointer ${
-                                (newExpenseData.payeeType || 'Other') === type
-                                  ? 'bg-slate-900 text-white border-slate-900'
-                                  : 'bg-slate-50 text-slate-700 border-slate-300 hover:bg-slate-100'
-                              }`}
+                              className={`py-1.5 rounded text-xs font-bold border transition cursor-pointer ${(newExpenseData.payeeType || 'Other') === type
+                                ? 'bg-slate-900 text-white border-slate-900'
+                                : 'bg-slate-50 text-slate-700 border-slate-300 hover:bg-slate-100'
+                                }`}
                             >
                               {type}
                             </button>
@@ -6380,19 +6951,7 @@ export default function ServiceCenterApp() {
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                        <div>
-                          <label className="block font-bold text-slate-700 mb-1">Txn Type</label>
-                          <select
-                            value={newExpenseData.txnType || 'Expense'}
-                            onChange={(e) => setNewExpenseData({ ...newExpenseData, txnType: e.target.value })}
-                            className="w-full bg-white border border-slate-300 rounded px-2 py-1.5 text-slate-800 outline-none font-semibold"
-                          >
-                            {['Expense', 'Cash Out', 'Advance', 'Petty Cash', 'Salary / Wage', 'Bank Deposit / Transfer', 'Refund', 'Other'].map(t => (
-                              <option key={t} value={t}>{t}</option>
-                            ))}
-                          </select>
-                        </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         <div>
                           <label className="block font-bold text-slate-700 mb-1">Payment Method</label>
                           <select
@@ -6453,7 +7012,7 @@ export default function ServiceCenterApp() {
                                 amount: '',
                                 expenseDate: new Date().toISOString().split('T')[0],
                                 dueDate: new Date().toISOString().split('T')[0],
-                                txnType: 'Expense',
+                                txnType: 'Staff - Advance',
                                 paymentMethod: 'Cash',
                                 status: 'Should Pay Today',
                                 notes: ''
@@ -8046,6 +8605,246 @@ export default function ServiceCenterApp() {
               </div>
             </form>
           </div>
+        </div>
+      )}
+
+      {/* =========================================================================
+          MODAL: CONFIRM SUPPLIER ITEM RETURN (OLD / DAMAGED STOCK)
+          ========================================================================= */}
+      {showSupplierReturnModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <form onSubmit={handleSubmitSupplierReturn} className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-lg overflow-hidden">
+            <div className="bg-slate-900 text-white p-4 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <RotateCcw className="w-5 h-5 text-amber-400" />
+                <h3 className="font-bold text-sm">
+                  Confirm Supplier Item Return
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowSupplierReturnModal(false);
+                  setReturnItemForm(emptyReturnForm);
+                }}
+                className="text-slate-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-3 text-xs">
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-1">
+                <div className="font-bold text-slate-900 text-sm">
+                  {returnItemForm.description}
+                </div>
+                <div className="text-slate-600 font-mono text-[11px]">
+                  Supplier: {returnItemForm.supplierName} • Code: {returnItemForm.itemCode || '-'} • Available: {returnItemForm.availableQty} {returnItemForm.stockUnit}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">
+                    Return Qty ({returnItemForm.stockUnit || 'Units'}) *
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={returnItemForm.returnQty}
+                    onChange={(e) => {
+                      const q = e.target.value;
+                      const autoRefund = (Number(q) || 0) * (Number(returnItemForm.costPrice) || 0);
+                      setReturnItemForm({ ...returnItemForm, returnQty: q, refundAmount: String(autoRefund) });
+                    }}
+                    className="w-full bg-white border border-slate-300 rounded px-3 py-1.5 font-mono font-bold text-slate-900 outline-none"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Refund / Credit Amount (LKR) *</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={returnItemForm.refundAmount}
+                    onChange={(e) => setReturnItemForm({ ...returnItemForm, refundAmount: e.target.value })}
+                    className="w-full bg-white border border-amber-400 rounded px-3 py-1.5 font-mono font-black text-amber-900 outline-none"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Return Reason</label>
+                  <select
+                    value={returnItemForm.reason}
+                    onChange={(e) => setReturnItemForm({ ...returnItemForm, reason: e.target.value })}
+                    className="w-full bg-white border border-slate-300 rounded px-2.5 py-1.5 font-semibold text-slate-900 outline-none"
+                  >
+                    <option value="Old / Expired Stock">Old / Expired Stock</option>
+                    <option value="Damaged / Defective">Damaged / Defective</option>
+                    <option value="Slow Moving">Slow Moving</option>
+                    <option value="Wrong Item Delivered">Wrong Item Delivered</option>
+                    <option value="Other">Other</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Expense / Balance Adjustment</label>
+                  <select
+                    value={returnItemForm.refundMethod}
+                    onChange={(e) => setReturnItemForm({ ...returnItemForm, refundMethod: e.target.value })}
+                    className="w-full bg-white border border-slate-300 rounded px-2.5 py-1.5 font-semibold text-slate-900 outline-none"
+                  >
+                    <option value="Deduct from Supplier Balance">Deduct from Supplier Balance</option>
+                    <option value="Cash Refund">Cash Refund (Reduce Expenses)</option>
+                    <option value="Credit Note">Credit Note (Reduce Expenses)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Notes</label>
+                <input
+                  type="text"
+                  value={returnItemForm.notes}
+                  onChange={(e) => setReturnItemForm({ ...returnItemForm, notes: e.target.value })}
+                  placeholder="Optional return note..."
+                  className="w-full bg-white border border-slate-300 rounded px-3 py-1.5 text-slate-800 outline-none"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowSupplierReturnModal(false);
+                    setReturnItemForm(emptyReturnForm);
+                  }}
+                  className="bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold px-4 py-2 rounded-lg cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="bg-amber-600 hover:bg-amber-700 text-white font-bold px-4 py-2 rounded-lg flex items-center gap-1.5 cursor-pointer shadow-xs"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  Confirm Return
+                </button>
+              </div>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* =========================================================================
+          MODAL: CUSTOMER VEHICLE ITEM RETURN (UPDATE SERVICE BILL & RESTORE STOCK)
+          ========================================================================= */}
+      {customerReturnModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <form onSubmit={handleSubmitCustomerPartReturn} className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md overflow-hidden">
+            <div className="bg-slate-900 text-white p-4 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <RotateCcw className="w-5 h-5 text-amber-400" />
+                <h3 className="font-bold text-sm">
+                  Customer Item Return — {customerReturnModal.serviceRecord.vehicleNo}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCustomerReturnModal(null)}
+                className="text-slate-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-3 text-xs">
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-1">
+                <div className="font-bold text-slate-900">
+                  {customerReturnModal.part.name || customerReturnModal.part.description}
+                </div>
+                <div className="text-slate-600 font-mono text-[11px]">
+                  Bill #{customerReturnModal.serviceRecord.invoiceNo} • Qty on Bill: {customerReturnModal.maxQty} × LKR {Number(customerReturnModal.part.unitPrice || customerReturnModal.part.rate || 0).toLocaleString()}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Return Quantity (Max {customerReturnModal.maxQty}) *</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max={customerReturnModal.maxQty}
+                    value={customerReturnModal.returnQty}
+                    onChange={(e) => setCustomerReturnModal({ ...customerReturnModal, returnQty: e.target.value })}
+                    className="w-full bg-white border border-slate-300 rounded px-3 py-1.5 font-mono font-bold text-slate-900 outline-none"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Reason</label>
+                  <select
+                    value={customerReturnModal.reason}
+                    onChange={(e) => setCustomerReturnModal({ ...customerReturnModal, reason: e.target.value })}
+                    className="w-full bg-white border border-slate-300 rounded px-2.5 py-1.5 font-semibold text-slate-800 outline-none"
+                  >
+                    <option value="Customer Returned">Customer Returned</option>
+                    <option value="Wrong Part">Wrong Part</option>
+                    <option value="Defective / Damaged">Defective / Damaged</option>
+                    <option value="Not Required">Not Required</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Notes</label>
+                <input
+                  type="text"
+                  value={customerReturnModal.notes}
+                  onChange={(e) => setCustomerReturnModal({ ...customerReturnModal, notes: e.target.value })}
+                  placeholder="Optional return note..."
+                  className="w-full bg-white border border-slate-300 rounded px-3 py-1.5 text-slate-800 outline-none"
+                />
+              </div>
+
+              <label className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg p-2.5 cursor-pointer font-semibold text-slate-800">
+                <input
+                  type="checkbox"
+                  checked={customerReturnModal.restoreStock}
+                  onChange={(e) => setCustomerReturnModal({ ...customerReturnModal, restoreStock: e.target.checked })}
+                  className="w-4 h-4 accent-blue-600"
+                />
+                <span>Add returned quantity back to catalog stock</span>
+              </label>
+
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-2.5 flex justify-between items-center">
+                <span className="font-bold text-blue-900">Bill Deduction &amp; Refund Expense:</span>
+                <span className="font-mono font-black text-blue-800 text-sm">
+                  - LKR {((Math.min(customerReturnModal.maxQty, Math.max(1, Number(customerReturnModal.returnQty) || 1))) * (Number(customerReturnModal.part.unitPrice || customerReturnModal.part.rate || 0))).toLocaleString()}
+                </span>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setCustomerReturnModal(null)}
+                  className="bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold px-4 py-2 rounded-lg cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="bg-amber-600 hover:bg-amber-700 text-white font-bold px-4 py-2 rounded-lg flex items-center gap-1.5 cursor-pointer shadow-xs"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  Confirm Return &amp; Update Bill
+                </button>
+              </div>
+            </div>
+          </form>
         </div>
       )}
 
