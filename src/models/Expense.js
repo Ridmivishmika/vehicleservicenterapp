@@ -13,7 +13,8 @@ const ExpenseSchema = new mongoose.Schema(
     payeeType: { type: String, default: 'Other', enum: ['Other', 'Worker', 'Vendor'] },
     payee: { type: String, required: true, trim: true },
     amount: { type: Number, required: true, default: 0 },
-    paymentMethod: { type: String, default: 'Cash', enum: ['Cash', 'Card', 'Bank Transfer', 'Cheque'] },
+    txnType: { type: String, default: 'Expense', trim: true },
+    paymentMethod: { type: String, default: 'Cash', enum: ['Cash', 'Card', 'Bank Transfer', 'Cheque', 'Credit (Pay Later)'] },
     status: { type: String, default: 'Paid', enum: ['Paid', 'Should Pay Today', 'Pending'] },
     dueDate: { type: String, default: '' },
     notes: { type: String, default: '' }

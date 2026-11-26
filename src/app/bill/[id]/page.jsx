@@ -85,6 +85,7 @@ export default function BillPrintPage({ params }) {
   }
 
   const partsList = bill.parts || (bill.items ? bill.items.filter(i => i.itemType === 'item') : []);
+  const jobItems = bill.items ? bill.items.filter(i => i.itemType === 'job') : [];
   const partsSubtotal = bill.partsTotal || partsList.reduce((s, p) => s + Number(p.total || ((p.quantity || 1) * (p.unitPrice || 0))), 0);
   const laborCharge = Number(bill.laborCharges || bill.jobTotal || 0);
   const discountAmt = Number(bill.discount || bill.totalDis || 0);
@@ -249,12 +250,33 @@ export default function BillPrintPage({ params }) {
 
         {/* Bill Calculation Totals */}
         <div className="border-t-2 border-slate-900 pt-3 space-y-1.5 text-xs">
-          <div className="flex justify-between text-slate-700">
-            <span className="font-semibold">{bill.serviceType} Base Labor Fee:</span>
-            <span className="font-mono font-bold text-slate-900">
-              LKR {laborCharge.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-            </span>
-          </div>
+          {jobItems.length > 0 ? (
+            <div className="space-y-1 pb-1 border-b border-slate-200">
+              {jobItems.map((job, idx) => (
+                <div key={idx} className="flex justify-between text-slate-700">
+                  <span className="font-semibold">{job.description} (Service):</span>
+                  <span className="font-mono font-bold text-slate-900">
+                    LKR {Number(job.amount ?? job.rate ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </span>
+                </div>
+              ))}
+              {jobItems.length > 1 && (
+                <div className="flex justify-between text-slate-800 pt-0.5">
+                  <span className="font-bold">Total Services Labor Fee:</span>
+                  <span className="font-mono font-bold text-slate-900">
+                    LKR {laborCharge.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </span>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="flex justify-between text-slate-700">
+              <span className="font-semibold">{bill.serviceType} Base Labor Fee:</span>
+              <span className="font-mono font-bold text-slate-900">
+                LKR {laborCharge.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              </span>
+            </div>
+          )}
 
           <div className="flex justify-between text-slate-700">
             <span className="font-semibold">Used Items & Replacement Parts Subtotal:</span>

@@ -24,9 +24,14 @@ const JobSchema = new mongoose.Schema({
     default: 0,
     min: 0
   },
+  nextServiceOdometer: {
+    type: Number,
+    default: 0,
+    min: 0
+  },
   estimatedDuration: {
     type: String,
-    default: '1 Hour'
+    default: ''
   },
   description: {
     type: String,

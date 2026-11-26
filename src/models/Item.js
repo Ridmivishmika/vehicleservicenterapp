@@ -7,6 +7,7 @@ const ItemSchema = new mongoose.Schema(
     description: { type: String, required: true, trim: true },
     supplierName: { type: String, default: '', trim: true, index: true },
     qtyOnHand: { type: Number, default: 0 },
+    stockUnit: { type: String, default: 'Units', trim: true },
     sellingPrice: { type: Number, default: 0 },
     costPrice: { type: Number, default: 0 },
     category: { type: String, default: 'General', trim: true },

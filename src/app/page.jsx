@@ -147,10 +147,12 @@ export default function ServiceCenterApp() {
   const [showDbConfigModal, setShowDbConfigModal] = useState(false);
   const [dbConfigUri, setDbConfigUri] = useState('');
   const [dbSaving, setDbSaving] = useState(false);
+  const [syncStatus, setSyncStatus] = useState({ pendingCount: 0, lastSyncedAt: null, lastSyncError: null, syncing: false });
 
   // Vehicles state
   const [vehicles, setVehicles] = useState([]);
   const [loadingVehicles, setLoadingVehicles] = useState(true);
+  const [savingService, setSavingService] = useState(false);
 
   // Items catalog
   const [catalogItems, setCatalogItems] = useState([]);
@@ -162,14 +164,28 @@ export default function ServiceCenterApp() {
     supplierName: '',
     category: 'Oils & Fluids',
     qtyOnHand: 0,
+    stockUnit: 'Bottles',
     costPrice: 0,
     sellingPrice: 0,
     stockDate: '',
     stockTime: ''
   };
   const [itemForm, setItemForm] = useState(emptyItemForm);
+  const [itemCategories, setItemCategories] = useState([
+    'Oils & Fluids',
+    'Filters',
+    'Brake Components',
+    'Batteries',
+    'Engine Parts',
+    'Accessories',
+    'General',
+    'Other'
+  ]);
+  const [customItemCategory, setCustomItemCategory] = useState('');
   const [isEditingItem, setIsEditingItem] = useState(false);
   const [editingItemId, setEditingItemId] = useState(null);
+  const [editingItemRowId, setEditingItemRowId] = useState(null);
+  const [editingItemRowData, setEditingItemRowData] = useState({});
   const [showItemForm, setShowItemForm] = useState(false);
   const [supplierItemFilter, setSupplierItemFilter] = useState('ALL');
   const [stockEntryForm, setStockEntryForm] = useState({
@@ -177,6 +193,8 @@ export default function ServiceCenterApp() {
     costPrice: '',
     sellingPrice: '',
     qtyToAdd: '',
+    stockUnit: 'Bottles',
+    customStockUnit: '',
     stockDate: new Date().toISOString().split('T')[0],
     stockTime: new Date().toTimeString().slice(0, 5)
   });
@@ -311,6 +329,7 @@ export default function ServiceCenterApp() {
   const [selectedServiceVehicleNo, setSelectedServiceVehicleNo] = useState('');
   const [serviceVehicleSearchQuery, setServiceVehicleSearchQuery] = useState('');
   const [serviceTypeSearchQuery, setServiceTypeSearchQuery] = useState('');
+  const [showServicePickerDropdown, setShowServicePickerDropdown] = useState(false);
   const [allServices, setAllServices] = useState([]);
   const [serviceHistory, setServiceHistory] = useState([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
@@ -338,7 +357,7 @@ export default function ServiceCenterApp() {
     jobName: '',
     category: 'Vehicle Service', // Vehicle Service | Car Wash | Mechanical | Diagnostics | Other
     standardLaborFee: '',
-    estimatedDuration: '1 Hour',
+    nextServiceOdometer: '',
     description: '',
     checklistText: ''
   };
@@ -354,6 +373,7 @@ export default function ServiceCenterApp() {
     serviceTime: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     meterReading: '',
     serviceType: 'Full Service',
+    selectedServices: [],
     paymentMethod: 'Cash', // Cash | Card | Bank Transfer | Cheque | Credit (Pay Later)
     laborCharges: initialFullServicePkg.baseFee, // 6500
     checklist: [...initialFullServicePkg.checklist],
@@ -435,6 +455,7 @@ export default function ServiceCenterApp() {
     amount: '',
     expenseDate: new Date().toISOString().split('T')[0],
     dueDate: new Date().toISOString().split('T')[0],
+    txnType: 'Expense',
     paymentMethod: 'Cash',
     status: 'Should Pay Today',
     notes: ''
@@ -443,6 +464,7 @@ export default function ServiceCenterApp() {
   // Initial load
   useEffect(() => {
     fetchDbStatus();
+    fetchSyncStatus();
     loadVehicles();
     loadCatalogItems();
     loadSuppliers();
@@ -452,6 +474,18 @@ export default function ServiceCenterApp() {
     loadJobs();
     loadAllServices();
     checkAndSendServiceReminders();
+
+    const onOnline = () => {
+      handleSyncNow(true);
+    };
+    window.addEventListener('online', onOnline);
+    const intervalId = setInterval(() => {
+      fetchSyncStatus(true);
+    }, 30000);
+    return () => {
+      window.removeEventListener('online', onOnline);
+      clearInterval(intervalId);
+    };
   }, []);
 
   const checkAndSendServiceReminders = async () => {
@@ -601,7 +635,7 @@ export default function ServiceCenterApp() {
       jobName: jobForm.jobName.trim(),
       category: jobForm.category || 'Vehicle Service',
       standardLaborFee: Number(jobForm.standardLaborFee) || 0,
-      estimatedDuration: jobForm.estimatedDuration || '1 Hour',
+      nextServiceOdometer: Number(jobForm.nextServiceOdometer) || 0,
       description: jobForm.description || '',
       defaultChecklist: checklist
     };
@@ -637,7 +671,7 @@ export default function ServiceCenterApp() {
       jobName: job.jobName || '',
       category: job.category || 'Vehicle Service',
       standardLaborFee: job.standardLaborFee !== undefined ? String(job.standardLaborFee) : '',
-      estimatedDuration: job.estimatedDuration || '1 Hour',
+      nextServiceOdometer: job.nextServiceOdometer ? String(job.nextServiceOdometer) : '',
       description: job.description || '',
       checklistText: Array.isArray(job.defaultChecklist) ? job.defaultChecklist.join('\n') : ''
     });
@@ -748,6 +782,7 @@ export default function ServiceCenterApp() {
           amount: '',
           expenseDate: new Date().toISOString().split('T')[0],
           dueDate: new Date().toISOString().split('T')[0],
+          txnType: 'Expense',
           paymentMethod: 'Cash',
           status: 'Should Pay Today',
           notes: ''
@@ -780,6 +815,7 @@ export default function ServiceCenterApp() {
       amount: exp.amount || '',
       expenseDate: exp.expenseDate || new Date().toISOString().split('T')[0],
       dueDate: exp.dueDate || new Date().toISOString().split('T')[0],
+      txnType: exp.txnType || 'Expense',
       paymentMethod: exp.paymentMethod || 'Cash',
       status: exp.status || 'Should Pay Today',
       notes: exp.notes || ''
@@ -813,6 +849,68 @@ export default function ServiceCenterApp() {
       }
     } catch {
       setDbStatus({ connected: false, mode: 'Offline' });
+    }
+  };
+
+  const fetchSyncStatus = async (autoSyncIfOnline = false) => {
+    try {
+      const res = await fetch('/api/sync');
+      const data = await res.json();
+      setSyncStatus(prev => ({
+        ...prev,
+        pendingCount: data.pendingCount || 0,
+        lastSyncedAt: data.lastSyncedAt || null,
+        lastSyncError: data.lastSyncError || null
+      }));
+      if (typeof data.connected === 'boolean') {
+        setDbStatus(prev => ({ ...prev, connected: data.connected }));
+      }
+      if (autoSyncIfOnline && data.connected && (data.pendingCount || 0) > 0) {
+        await handleSyncNow(true);
+      }
+    } catch {
+      // ignore offline polling errors
+    }
+  };
+
+  const handleSyncNow = async (silent = false) => {
+    setSyncStatus(prev => ({ ...prev, syncing: true }));
+    try {
+      const res = await fetch('/api/sync', { method: 'POST' });
+      const data = await res.json();
+      setSyncStatus({
+        pendingCount: data.pendingCount || 0,
+        lastSyncedAt: data.lastSyncedAt || null,
+        lastSyncError: data.error || data.lastSyncError || null,
+        syncing: false
+      });
+      await fetchDbStatus();
+      if (data.success) {
+        await Promise.all([
+          loadVehicles(),
+          loadCatalogItems(),
+          loadSuppliers(),
+          loadSupplierInvoices(),
+          loadFinancials(),
+          loadExpenses(),
+          loadJobs(),
+          loadAllServices()
+        ]);
+        if (!silent || (data.syncedCount || 0) > 0) {
+          showNotification(
+            (data.syncedCount || 0) > 0
+              ? `Synced ${data.syncedCount} offline change(s) & pulled latest online data!`
+              : 'Synced & refreshed latest online data!'
+          );
+        }
+      } else if (!silent) {
+        showNotification(data.error || 'Still offline. Changes remain saved locally.', 'error');
+      }
+    } catch (err) {
+      setSyncStatus(prev => ({ ...prev, syncing: false }));
+      if (!silent) {
+        showNotification('Sync failed: ' + err.message, 'error');
+      }
     }
   };
 
@@ -949,39 +1047,59 @@ export default function ServiceCenterApp() {
     return vehicles.find(v => v.vehicleNo.toUpperCase() === selectedServiceVehicleNo.toUpperCase()) || null;
   }, [vehicles, selectedServiceVehicleNo]);
 
-  // When user changes Service Type (checks Job Master catalog first)
+  // When user selects/adds a Service Type (supports multiple services from Job Master)
   const handleServiceTypeChange = (typeName) => {
-    // 1. Look in registered jobs catalog
+    if (!typeName) return;
     const registeredJob = jobs.find(j => j.jobName === typeName || j.jobCode === typeName);
-    if (registeredJob) {
-      setServiceForm(prev => ({
+    const pkg = !registeredJob ? SERVICE_PACKAGES.find(p => p.name === typeName) : null;
+
+    const jobName = registeredJob ? registeredJob.jobName : (pkg ? pkg.name : typeName);
+    const jobCode = registeredJob ? (registeredJob.jobCode || '') : '';
+    const laborFee = registeredJob
+      ? (Number(registeredJob.standardLaborFee) || 0)
+      : (pkg ? Number(pkg.baseFee) || 0 : 4000);
+    const nextOdo = registeredJob ? (Number(registeredJob.nextServiceOdometer) || 0) : 0;
+    const newChecklist = registeredJob
+      ? (registeredJob.defaultChecklist || [])
+      : (pkg ? pkg.checklist || [] : []);
+    const desc = registeredJob
+      ? (registeredJob.description || `${jobName} service`)
+      : (pkg?.description || '');
+
+    setServiceForm(prev => {
+      const currentList = Array.isArray(prev.selectedServices) ? prev.selectedServices : [];
+      if (currentList.some(s => s.jobName === jobName)) {
+        return prev;
+      }
+      const updatedList = [...currentList, { jobCode, jobName, laborFee, nextServiceOdometer: nextOdo }];
+      const totalLabor = updatedList.reduce((sum, s) => sum + (Number(s.laborFee) || 0), 0);
+      const mergedChecklist = Array.from(new Set([...(prev.checklist || []), ...newChecklist]));
+      return {
         ...prev,
-        serviceType: registeredJob.jobName,
-        laborCharges: registeredJob.standardLaborFee || 0,
-        checklist: registeredJob.defaultChecklist && registeredJob.defaultChecklist.length > 0 ? [...registeredJob.defaultChecklist] : prev.checklist,
-        jobDetails: registeredJob.description || `${registeredJob.jobName} service`
-      }));
-      showNotification(`Switched to "${registeredJob.jobName}" (Standard Labor: LKR ${Number(registeredJob.standardLaborFee).toLocaleString()})`);
-      return;
-    }
+        selectedServices: updatedList,
+        serviceType: updatedList.map(s => s.jobName).join(' + '),
+        laborCharges: totalLabor,
+        nextServiceMeter: nextOdo > 0 ? String(nextOdo) : prev.nextServiceMeter,
+        checklist: mergedChecklist.length > 0 ? mergedChecklist : prev.checklist,
+        jobDetails: updatedList.length === 1 && desc ? desc : updatedList.map(s => s.jobName).join(', ')
+      };
+    });
 
-    // 2. Fallback to SERVICE_PACKAGES presets
-    const pkg = SERVICE_PACKAGES.find(p => p.name === typeName) || {
-      name: typeName,
-      baseFee: 4000,
-      recommendedItems: [],
-      checklist: []
-    };
+    showNotification(`Added "${jobName}" (LKR ${laborFee.toLocaleString()})`);
+  };
 
-    setServiceForm(prev => ({
-      ...prev,
-      serviceType: typeName,
-      laborCharges: pkg.baseFee,
-      checklist: pkg.checklist.length > 0 ? [...pkg.checklist] : prev.checklist,
-      jobDetails: pkg.description || prev.jobDetails
-    }));
-
-    showNotification(`Switched to "${typeName}" (Service Package Labor: LKR ${pkg.baseFee.toLocaleString()})`);
+  const handleRemoveSelectedService = (jobName) => {
+    setServiceForm(prev => {
+      const currentList = Array.isArray(prev.selectedServices) ? prev.selectedServices : [];
+      const updatedList = currentList.filter(s => s.jobName !== jobName);
+      const totalLabor = updatedList.reduce((sum, s) => sum + (Number(s.laborFee) || 0), 0);
+      return {
+        ...prev,
+        selectedServices: updatedList,
+        serviceType: updatedList.map(s => s.jobName).join(' + '),
+        laborCharges: totalLabor
+      };
+    });
   };
 
   // Auto-fill recommended items for the selected package (e.g. Full Service items)
@@ -1100,32 +1218,42 @@ export default function ServiceCenterApp() {
       showNotification('Please select a supplier part to add!', 'error');
       return;
     }
-    const found = catalogItems.find(i => (i.itemCode === appendPartSelectedCode) || (i.id === appendPartSelectedCode));
+    const found = catalogItems.find(
+      i => i.id === appendPartSelectedCode || i._id === appendPartSelectedCode || i.itemCode === appendPartSelectedCode
+    );
     if (!found) return;
 
+    const foundId = found.id || found._id || '';
+    const foundSupplier = found.supplierName || 'General';
     const qty = Number(appendPartQty) > 0 ? Number(appendPartQty) : 1;
     const price = Number(found.sellingPrice) || 0;
     const addedTotal = qty * price;
 
     const existingParts = serviceRecord.parts || [];
     const updatedParts = [...existingParts];
-    const existingIdx = updatedParts.findIndex(p => p.code === found.itemCode);
+    const existingIdx = updatedParts.findIndex(p => {
+      const sameItem = foundId && p.itemId ? p.itemId === foundId : p.code === found.itemCode;
+      const samePrice = Number(p.unitPrice || p.rate || 0) === price;
+      const sameSupplier = (p.supplierName || p.supplier || 'General') === foundSupplier;
+      return sameItem && samePrice && sameSupplier;
+    });
     if (existingIdx !== -1) {
       const cur = updatedParts[existingIdx];
       const newQty = (cur.quantity || cur.qty || 1) + qty;
       updatedParts[existingIdx] = {
         ...cur,
-        supplier: found.supplierName || cur.supplier || 'General',
-        supplierName: found.supplierName || cur.supplierName || 'General',
+        supplier: foundSupplier,
+        supplierName: foundSupplier,
         quantity: newQty,
         total: newQty * (cur.unitPrice || cur.rate || price)
       };
     } else {
       updatedParts.push({
+        itemId: foundId,
         code: found.itemCode,
         name: found.description,
-        supplier: found.supplierName || 'General',
-        supplierName: found.supplierName || 'General',
+        supplier: foundSupplier,
+        supplierName: foundSupplier,
         quantity: qty,
         unitPrice: price,
         total: addedTotal
@@ -1247,11 +1375,20 @@ export default function ServiceCenterApp() {
       showNotification('Please select a vehicle first!', 'error');
       return;
     }
+    if (!serviceForm.serviceDate) {
+      showNotification('Please select the Service Date!', 'error');
+      return;
+    }
     if (!serviceForm.meterReading) {
       showNotification('Please enter the current odometer / mileage reading (KM)!', 'error');
       return;
     }
+    if (!serviceForm.serviceType) {
+      showNotification('Please select a Service / Job Type!', 'error');
+      return;
+    }
 
+    setSavingService(true);
     try {
       const payload = {
         vehicleNo: selectedServiceVehicleNo.toUpperCase(),
@@ -1283,6 +1420,7 @@ export default function ServiceCenterApp() {
         status: 'Invoiced',
         checklist: serviceForm.checklist,
         parts: serviceForm.parts.map(p => ({
+          itemId: p.itemId || '',
           code: p.code || '',
           name: p.name || '',
           supplier: p.supplier || p.supplierName || 'General',
@@ -1305,16 +1443,27 @@ export default function ServiceCenterApp() {
             amount: Number(p.total) || 0,
             itemType: 'item'
           })),
-          {
-            no: serviceForm.parts.length + 1,
-            code: 'JOB-SVC-FEE',
-            description: `${serviceForm.serviceType} Base Labor & Safety Inspection Fee`,
-            qty: 1,
-            rate: serviceLaborCharge,
-            dis: 0,
-            amount: serviceLaborCharge,
-            itemType: 'job'
-          }
+          ...(Array.isArray(serviceForm.selectedServices) && serviceForm.selectedServices.length > 0
+            ? serviceForm.selectedServices.map((srv, idx) => ({
+                no: serviceForm.parts.length + idx + 1,
+                code: srv.jobCode || `JOB-${idx + 1}`,
+                description: srv.jobName,
+                qty: 1,
+                rate: Number(srv.laborFee) || 0,
+                dis: 0,
+                amount: Number(srv.laborFee) || 0,
+                itemType: 'job'
+              }))
+            : [{
+                no: serviceForm.parts.length + 1,
+                code: 'JOB-SVC-FEE',
+                description: `${serviceForm.serviceType} Base Labor & Safety Inspection Fee`,
+                qty: 1,
+                rate: serviceLaborCharge,
+                dis: 0,
+                amount: serviceLaborCharge,
+                itemType: 'job'
+              }])
         ]
       };
 
@@ -1325,18 +1474,26 @@ export default function ServiceCenterApp() {
       });
       const json = await res.json();
 
-      if (json.success) {
-        showNotification(`Service recorded! Total Charges: LKR ${totalServiceCharges.toLocaleString()}`);
+      if (res.ok && json.success) {
         await Promise.all([
           fetchServiceHistory(selectedServiceVehicleNo),
           loadFinancials(),
-          loadAllServices()
+          loadAllServices(),
+          loadCatalogItems(),
+          fetchSyncStatus()
         ]);
         // Automatically open the printable invoice / customer bill in another page
         const billKey = json.data._id || json.data.id || json.data.invoiceNo;
+        let popupBlocked = false;
         if (typeof window !== 'undefined') {
-          window.open(`/bill/${encodeURIComponent(billKey)}`, '_blank');
+          const popup = window.open(`/bill/${encodeURIComponent(billKey)}`, '_blank');
+          if (!popup) popupBlocked = true;
         }
+        showNotification(
+          popupBlocked
+            ? `Service saved (LKR ${totalServiceCharges.toLocaleString()})! Tap "Print Bill" in History to view invoice.`
+            : `Service recorded! Total Charges: LKR ${totalServiceCharges.toLocaleString()}`
+        );
         setVehicleSubTab('history');
         setServiceSubTab('history');
       } else {
@@ -1344,6 +1501,8 @@ export default function ServiceCenterApp() {
       }
     } catch (err) {
       showNotification('Save error: ' + err.message, 'error');
+    } finally {
+      setSavingService(false);
     }
   };
 
@@ -1690,13 +1849,28 @@ export default function ServiceCenterApp() {
       showNotification('Item description is required', 'error');
       return;
     }
+    let finalCategory = itemForm.category || 'General';
+    if (finalCategory === 'Other') {
+      const trimmed = customItemCategory.trim();
+      if (!trimmed) {
+        showNotification('Please enter the new category name!', 'error');
+        return;
+      }
+      finalCategory = trimmed;
+      if (!itemCategories.includes(trimmed)) {
+        setItemCategories(prev => {
+          const withoutOther = prev.filter(c => c !== 'Other');
+          return [...withoutOther, trimmed, 'Other'];
+        });
+      }
+    }
     try {
       const url = isEditingItem && editingItemId ? `/api/items/${editingItemId}` : '/api/items';
       const method = isEditingItem && editingItemId ? 'PUT' : 'POST';
       const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(itemForm)
+        body: JSON.stringify({ ...itemForm, category: finalCategory })
       });
       const json = await res.json();
       if (json.success) {
@@ -1716,6 +1890,7 @@ export default function ServiceCenterApp() {
           }));
         }
         setItemForm(emptyItemForm);
+        setCustomItemCategory('');
         setIsEditingItem(false);
         setEditingItemId(null);
         setRegisterItemSupplierSearch('');
@@ -1741,6 +1916,13 @@ export default function ServiceCenterApp() {
       return;
     }
     const addedQty = Number(stockEntryForm.qtyToAdd) || 0;
+    const finalStockUnit = stockEntryForm.stockUnit === 'Other'
+      ? (stockEntryForm.customStockUnit || '').trim()
+      : (stockEntryForm.stockUnit || targetItem.stockUnit || 'Bottles');
+    if (stockEntryForm.stockUnit === 'Other' && !finalStockUnit) {
+      showNotification('Please enter the custom unit / measurement name!', 'error');
+      return;
+    }
     const stockDate = stockEntryForm.stockDate || new Date().toISOString().split('T')[0];
     const stockTime = stockEntryForm.stockTime || new Date().toTimeString().slice(0, 5);
     const isInitialUnstocked =
@@ -1758,6 +1940,7 @@ export default function ServiceCenterApp() {
               costPrice: Number(stockEntryForm.costPrice) || 0,
               sellingPrice: Number(stockEntryForm.sellingPrice) || 0,
               qtyOnHand: addedQty,
+              stockUnit: finalStockUnit,
               stockDate,
               stockTime
             })
@@ -1774,6 +1957,7 @@ export default function ServiceCenterApp() {
               costPrice: Number(stockEntryForm.costPrice) || 0,
               sellingPrice: Number(stockEntryForm.sellingPrice) || 0,
               qtyOnHand: addedQty,
+              stockUnit: finalStockUnit,
               stockDate,
               stockTime
             })
@@ -1782,8 +1966,8 @@ export default function ServiceCenterApp() {
       if (json.success) {
         showNotification(
           isInitialUnstocked
-            ? `Saved "${targetItem.description}" stock (+${addedQty}) & pricing!`
-            : `Added new stock & price entry for "${targetItem.description}" (+${addedQty})!`
+            ? `Saved "${targetItem.description}" stock (+${addedQty} ${finalStockUnit}) & pricing!`
+            : `Added new stock & price entry for "${targetItem.description}" (+${addedQty} ${finalStockUnit})!`
         );
         await loadCatalogItems();
         setStockEntryItemSearch('');
@@ -1792,6 +1976,8 @@ export default function ServiceCenterApp() {
           costPrice: '',
           sellingPrice: '',
           qtyToAdd: '',
+          stockUnit: 'Bottles',
+          customStockUnit: '',
           stockDate: new Date().toISOString().split('T')[0],
           stockTime: new Date().toTimeString().slice(0, 5)
         });
@@ -1824,26 +2010,84 @@ export default function ServiceCenterApp() {
     window.scrollTo({ top: 120, behavior: 'smooth' });
   };
 
+  const handleStartInlineItemEdit = (item) => {
+    const rowId = item.id || item._id || item.itemCode;
+    setEditingItemRowId(rowId);
+    setEditingItemRowData({
+      supplierName: item.supplierName || '',
+      itemCode: item.itemCode || '',
+      barcode: item.barcode || '',
+      description: item.description || '',
+      category: item.category || 'General',
+      qtyOnHand: item.qtyOnHand ?? 0,
+      stockUnit: item.stockUnit || 'Bottles',
+      costPrice: item.costPrice ?? 0,
+      sellingPrice: item.sellingPrice ?? 0,
+      stockDate: item.stockDate || '',
+      stockTime: item.stockTime || ''
+    });
+  };
+
+  const handleSaveInlineItemEdit = async (id) => {
+    try {
+      const res = await fetch(`/api/items/${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...editingItemRowData,
+          qtyOnHand: Number(editingItemRowData.qtyOnHand) || 0,
+          costPrice: Number(editingItemRowData.costPrice) || 0,
+          sellingPrice: Number(editingItemRowData.sellingPrice) || 0
+        })
+      });
+      const json = await res.json();
+      if (json.success) {
+        showNotification(`Updated "${editingItemRowData.description}"!`);
+        setEditingItemRowId(null);
+        setEditingItemRowData({});
+        await loadCatalogItems();
+      } else {
+        showNotification(json.message || 'Failed to update item', 'error');
+      }
+    } catch (err) {
+      showNotification('Error updating item: ' + err.message, 'error');
+    }
+  };
+
+  const handleCancelInlineItemEdit = () => {
+    setEditingItemRowId(null);
+    setEditingItemRowData({});
+  };
+
   const handleQuickAddPartToService = () => {
     if (!quickSelectedPartCode) {
       showNotification('Please select an item from the dropdown first!', 'error');
       return;
     }
-    const found = catalogItems.find(i => (i.itemCode === quickSelectedPartCode) || (i.id === quickSelectedPartCode));
+    const found = catalogItems.find(
+      i => i.id === quickSelectedPartCode || i._id === quickSelectedPartCode || i.itemCode === quickSelectedPartCode
+    );
     if (!found) return;
 
+    const foundId = found.id || found._id || '';
+    const foundSupplier = found.supplierName || 'General';
     const qty = Number(quickPartQty) > 0 ? Number(quickPartQty) : 1;
     const price = Number(found.sellingPrice) || 0;
 
     setServiceForm(prev => {
-      const existingIdx = prev.parts.findIndex(p => p.code === found.itemCode);
+      const existingIdx = prev.parts.findIndex(p => {
+        const sameItem = foundId && p.itemId ? p.itemId === foundId : p.code === found.itemCode;
+        const samePrice = Number(p.unitPrice) === price;
+        const sameSupplier = (p.supplierName || p.supplier || 'General') === foundSupplier;
+        return sameItem && samePrice && sameSupplier;
+      });
       if (existingIdx !== -1) {
         const updated = [...prev.parts];
         const newQty = updated[existingIdx].quantity + qty;
         updated[existingIdx] = {
           ...updated[existingIdx],
-          supplier: found.supplierName || updated[existingIdx].supplier || 'General',
-          supplierName: found.supplierName || updated[existingIdx].supplierName || 'General',
+          supplier: foundSupplier,
+          supplierName: foundSupplier,
           quantity: newQty,
           total: newQty * updated[existingIdx].unitPrice
         };
@@ -1855,10 +2099,11 @@ export default function ServiceCenterApp() {
         parts: [
           ...prev.parts,
           {
+            itemId: foundId,
             code: found.itemCode,
             name: found.description,
-            supplier: found.supplierName || 'General',
-            supplierName: found.supplierName || 'General',
+            supplier: foundSupplier,
+            supplierName: foundSupplier,
             quantity: qty,
             unitPrice: price,
             total: qty * price
@@ -2057,18 +2302,51 @@ export default function ServiceCenterApp() {
   const periodNetProfit = periodRevenueTotal - periodTotalExpenses;
 
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-800 pb-20">
+    <div className="min-h-screen bg-slate-100 text-slate-800 pb-20 overflow-x-hidden">
       {/* Top Application Header */}
       <header className="bg-slate-900 text-white shadow-md border-b border-slate-800 sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
+        <div className="max-w-7xl mx-auto px-3 sm:px-4 py-2.5 sm:py-3 flex flex-wrap items-center justify-between gap-2 sm:gap-3">
           {/* Logo & Clean Brand Title */}
-          <div className="flex items-center space-x-3">
-            <div className="bg-blue-600 p-2.5 rounded-xl text-white shadow-md shadow-blue-500/20">
-              <Wrench className="w-5 h-5" />
+          <div className="flex items-center space-x-2.5 sm:space-x-3">
+            <div className="bg-blue-600 p-2 sm:p-2.5 rounded-xl text-white shadow-md shadow-blue-500/20">
+              <Wrench className="w-4 h-4 sm:w-5 sm:h-5" />
             </div>
-            <h1 className="text-base sm:text-lg font-black tracking-wider text-white uppercase">
+            <h1 className="text-sm sm:text-lg font-black tracking-wider text-white uppercase">
               AUTO CARE SERVICE CENTER
             </h1>
+          </div>
+
+          {/* Online/Offline Status, Pending Queue & Sync Now */}
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowDbConfigModal(true)}
+              title="Database Connection Settings"
+              className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold flex items-center gap-1.5 border transition cursor-pointer ${
+                dbStatus.connected
+                  ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300 hover:bg-emerald-900/60'
+                  : 'bg-amber-950/60 border-amber-500/40 text-amber-300 hover:bg-amber-900/60'
+              }`}
+            >
+              <span className={`w-2 h-2 rounded-full ${dbStatus.connected ? 'bg-emerald-400' : 'bg-amber-400'}`}></span>
+              <span>{dbStatus.connected ? 'ONLINE' : 'OFFLINE CACHE'}</span>
+              {syncStatus.pendingCount > 0 && (
+                <span className="ml-1 bg-amber-500 text-slate-950 px-1.5 py-0.5 rounded font-black text-[10px]">
+                  {syncStatus.pendingCount} pending
+                </span>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleSyncNow(false)}
+              disabled={syncStatus.syncing}
+              title={syncStatus.lastSyncedAt ? `Last synced: ${new Date(syncStatus.lastSyncedAt).toLocaleString()}` : 'Push offline changes & pull online updates'}
+              className="bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white px-3 py-1.5 rounded-lg text-[11px] font-bold flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${syncStatus.syncing ? 'animate-spin' : ''}`} />
+              <span>{syncStatus.syncing ? 'Syncing...' : 'Sync Now'}</span>
+            </button>
           </div>
         </div>
 
@@ -2658,14 +2936,22 @@ export default function ServiceCenterApp() {
                             onChange={(e) => setItemForm({ ...itemForm, category: e.target.value })}
                             className="w-full bg-white border border-slate-300 rounded px-3 py-2 text-slate-800 font-semibold outline-none"
                           >
-                            <option value="Oils & Fluids">Oils & Fluids</option>
-                            <option value="Filters">Filters</option>
-                            <option value="Brake Components">Brake Components</option>
-                            <option value="Batteries">Batteries</option>
-                            <option value="Engine Parts">Engine Parts</option>
-                            <option value="Accessories">Accessories</option>
-                            <option value="General">General Consumables</option>
+                            {itemCategories.map(cat => (
+                              <option key={cat} value={cat}>
+                                {cat === 'General' ? 'General Consumables' : cat}
+                              </option>
+                            ))}
                           </select>
+                          {itemForm.category === 'Other' && (
+                            <input
+                              type="text"
+                              value={customItemCategory}
+                              onChange={(e) => setCustomItemCategory(e.target.value)}
+                              placeholder="Enter new category name..."
+                              className="mt-1.5 w-full bg-white border border-indigo-400 rounded px-3 py-1.5 text-xs text-slate-900 font-semibold outline-none focus:ring-1 focus:ring-indigo-500"
+                              required
+                            />
+                          )}
                         </div>
 
                         <div className="sm:col-span-2">
@@ -2950,17 +3236,49 @@ export default function ServiceCenterApp() {
                           />
                         </div>
 
-                        <div>
-                          <label className="block font-bold text-slate-700 mb-1">Quantity in Stock (Add Qty) *</label>
-                          <input
-                            type="number"
-                            min="0"
-                            value={stockEntryForm.qtyToAdd}
-                            onChange={(e) => setStockEntryForm({ ...stockEntryForm, qtyToAdd: e.target.value })}
-                            placeholder="0"
-                            className="w-full bg-white border border-slate-300 rounded px-3 py-2 text-slate-900 font-mono font-bold outline-none"
-                            required
-                          />
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="block font-bold text-slate-700 mb-1">Quantity in Stock *</label>
+                            <input
+                              type="number"
+                              min="0"
+                              value={stockEntryForm.qtyToAdd}
+                              onChange={(e) => setStockEntryForm({ ...stockEntryForm, qtyToAdd: e.target.value })}
+                              placeholder="0"
+                              className="w-full bg-white border border-slate-300 rounded px-3 py-2 text-slate-900 font-mono font-bold outline-none"
+                              required
+                            />
+                          </div>
+                          <div>
+                            <label className="block font-bold text-slate-700 mb-1">Unit / Measurement *</label>
+                            <select
+                              value={stockEntryForm.stockUnit}
+                              onChange={(e) => setStockEntryForm({ ...stockEntryForm, stockUnit: e.target.value })}
+                              className="w-full bg-white border border-slate-300 rounded px-2.5 py-2 text-slate-900 font-semibold outline-none focus:ring-1 focus:ring-blue-500"
+                            >
+                              <option value="Bottles">Bottles</option>
+                              <option value="Barrels">Barrels</option>
+                              <option value="Liters (L)">Liters (L)</option>
+                              <option value="Milliliters (ml)">Milliliters (ml)</option>
+                              <option value="Pieces">Pieces</option>
+                              <option value="Packs">Packs</option>
+                              <option value="Cans">Cans</option>
+                              <option value="Kg">Kg</option>
+                              <option value="Meters">Meters</option>
+                              <option value="Units">Units</option>
+                              <option value="Other">Other</option>
+                            </select>
+                            {stockEntryForm.stockUnit === 'Other' && (
+                              <input
+                                type="text"
+                                value={stockEntryForm.customStockUnit || ''}
+                                onChange={(e) => setStockEntryForm({ ...stockEntryForm, customStockUnit: e.target.value })}
+                                placeholder="Enter unit name (e.g. Boxes, Drums)..."
+                                className="mt-1.5 w-full bg-white border border-blue-400 rounded px-2.5 py-1.5 text-xs text-slate-900 font-semibold outline-none focus:ring-1 focus:ring-blue-500"
+                                required
+                              />
+                            )}
+                          </div>
                         </div>
 
                         <div className="grid grid-cols-2 gap-2">
@@ -3069,58 +3387,200 @@ export default function ServiceCenterApp() {
                             );
                           }
 
-                          return filtered.map((item) => (
-                            <tr key={item.id || item._id || item.itemCode} className="hover:bg-slate-50 transition">
-                              <td className="py-2.5 px-3">
-                                <span className="bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold px-2 py-0.5 rounded text-[11px]">
-                                  {item.supplierName || 'General'}
-                                </span>
-                              </td>
-                              <td className="py-2.5 px-3 font-mono font-bold text-blue-700">{item.itemCode}</td>
-                              <td className="py-2.5 px-3 font-mono text-slate-500">{item.barcode || '-'}</td>
-                              <td className="py-2.5 px-3 font-bold text-slate-900">{item.description}</td>
-                              <td className="py-2.5 px-3">
-                                <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded text-[10px] font-semibold">
-                                  {item.category}
-                                </span>
-                              </td>
-                              <td className="py-2.5 px-3 text-center font-mono font-bold text-slate-800">
-                                {item.qtyOnHand}
-                              </td>
-                              <td className="py-2.5 px-3 text-right font-mono text-slate-600">
-                                {Number(item.costPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                              </td>
-                              <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-900">
-                                {Number(item.sellingPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                              </td>
-                              <td className="py-2.5 px-3 text-center font-mono text-[11px] text-slate-600">
-                                {item.stockDate || item.updatedAt?.slice(0, 10) || '-'}
-                                {item.stockTime ? ` ${item.stockTime}` : ''}
-                              </td>
-                              <td className="py-2.5 px-3 text-center">
-                                <div className="flex items-center justify-center gap-1.5">
-                                  <button
-                                    type="button"
-                                    onClick={() => handleEditItem(item, true)}
-                                    className="bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold px-2 py-1 rounded text-xs transition flex items-center gap-1 cursor-pointer"
-                                    title="Edit Item"
-                                  >
-                                    <Edit3 className="w-3 h-3" />
-                                    Edit
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleDeleteItem(item.id || item._id || item.itemCode, item.description)}
-                                    className="bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold px-2 py-1 rounded text-xs transition flex items-center gap-1 cursor-pointer"
-                                    title="Delete Item"
-                                  >
-                                    <Trash2 className="w-3 h-3" />
-                                    Delete
-                                  </button>
-                                </div>
-                              </td>
-                            </tr>
-                          ));
+                          return filtered.map((item) => {
+                            const rowKey = item.id || item._id || item.itemCode;
+                            const isRowEditing = editingItemRowId === rowKey;
+                            if (isRowEditing) {
+                              return (
+                                <tr key={rowKey} className="bg-amber-50/70">
+                                  <td className="p-1.5">
+                                    <select
+                                      value={editingItemRowData.supplierName}
+                                      onChange={(e) => setEditingItemRowData({ ...editingItemRowData, supplierName: e.target.value })}
+                                      className="w-full bg-white border border-slate-300 rounded px-1.5 py-1 text-[11px] font-semibold"
+                                    >
+                                      <option value="">General</option>
+                                      {suppliers.map(s => (
+                                        <option key={s.id || s._id} value={s.supplierName}>{s.supplierName}</option>
+                                      ))}
+                                    </select>
+                                  </td>
+                                  <td className="p-1.5">
+                                    <input
+                                      type="text"
+                                      value={editingItemRowData.itemCode}
+                                      onChange={(e) => setEditingItemRowData({ ...editingItemRowData, itemCode: e.target.value.toUpperCase() })}
+                                      className="w-24 bg-white border border-slate-300 rounded px-1.5 py-1 font-mono text-[11px] font-bold"
+                                    />
+                                  </td>
+                                  <td className="p-1.5">
+                                    <input
+                                      type="text"
+                                      value={editingItemRowData.barcode}
+                                      onChange={(e) => setEditingItemRowData({ ...editingItemRowData, barcode: e.target.value })}
+                                      className="w-24 bg-white border border-slate-300 rounded px-1.5 py-1 font-mono text-[11px]"
+                                    />
+                                  </td>
+                                  <td className="p-1.5">
+                                    <input
+                                      type="text"
+                                      value={editingItemRowData.description}
+                                      onChange={(e) => setEditingItemRowData({ ...editingItemRowData, description: e.target.value })}
+                                      className="w-full min-w-[140px] bg-white border border-slate-300 rounded px-1.5 py-1 text-[11px] font-semibold"
+                                    />
+                                  </td>
+                                  <td className="p-1.5">
+                                    <select
+                                      value={editingItemRowData.category}
+                                      onChange={(e) => setEditingItemRowData({ ...editingItemRowData, category: e.target.value })}
+                                      className="bg-white border border-slate-300 rounded px-1.5 py-1 text-[11px]"
+                                    >
+                                      <option value="Oils & Fluids">Oils & Fluids</option>
+                                      <option value="Filters">Filters</option>
+                                      <option value="Brake Components">Brake Components</option>
+                                      <option value="Batteries">Batteries</option>
+                                      <option value="Engine Parts">Engine Parts</option>
+                                      <option value="Accessories">Accessories</option>
+                                      <option value="General">General</option>
+                                    </select>
+                                  </td>
+                                  <td className="p-1.5">
+                                    <div className="flex items-center gap-1">
+                                      <input
+                                        type="number"
+                                        min="0"
+                                        value={editingItemRowData.qtyOnHand}
+                                        onChange={(e) => setEditingItemRowData({ ...editingItemRowData, qtyOnHand: e.target.value })}
+                                        className="w-16 bg-white border border-slate-300 rounded px-1.5 py-1 font-mono text-[11px] text-center font-bold"
+                                      />
+                                      <select
+                                        value={editingItemRowData.stockUnit}
+                                        onChange={(e) => setEditingItemRowData({ ...editingItemRowData, stockUnit: e.target.value })}
+                                        className="bg-white border border-slate-300 rounded px-1 py-1 text-[10px]"
+                                      >
+                                        <option value="Bottles">Bottles</option>
+                                        <option value="Barrels">Barrels</option>
+                                        <option value="Liters (L)">Liters (L)</option>
+                                        <option value="Milliliters (ml)">Milliliters (ml)</option>
+                                        <option value="Pieces">Pieces</option>
+                                        <option value="Packs">Packs</option>
+                                        <option value="Cans">Cans</option>
+                                        <option value="Kg">Kg</option>
+                                        <option value="Meters">Meters</option>
+                                        <option value="Units">Units</option>
+                                      </select>
+                                    </div>
+                                  </td>
+                                  <td className="p-1.5">
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      step="0.01"
+                                      value={editingItemRowData.costPrice}
+                                      onChange={(e) => setEditingItemRowData({ ...editingItemRowData, costPrice: e.target.value })}
+                                      className="w-20 bg-white border border-slate-300 rounded px-1.5 py-1 font-mono text-[11px] text-right"
+                                    />
+                                  </td>
+                                  <td className="p-1.5">
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      step="0.01"
+                                      value={editingItemRowData.sellingPrice}
+                                      onChange={(e) => setEditingItemRowData({ ...editingItemRowData, sellingPrice: e.target.value })}
+                                      className="w-20 bg-white border border-slate-300 rounded px-1.5 py-1 font-mono text-[11px] text-right font-bold"
+                                    />
+                                  </td>
+                                  <td className="p-1.5">
+                                    <div className="flex flex-col gap-1">
+                                      <input
+                                        type="date"
+                                        value={editingItemRowData.stockDate}
+                                        onChange={(e) => setEditingItemRowData({ ...editingItemRowData, stockDate: e.target.value })}
+                                        className="bg-white border border-slate-300 rounded px-1 py-0.5 text-[10px]"
+                                      />
+                                      <input
+                                        type="time"
+                                        value={editingItemRowData.stockTime}
+                                        onChange={(e) => setEditingItemRowData({ ...editingItemRowData, stockTime: e.target.value })}
+                                        className="bg-white border border-slate-300 rounded px-1 py-0.5 text-[10px]"
+                                      />
+                                    </div>
+                                  </td>
+                                  <td className="p-1.5 text-center">
+                                    <div className="flex items-center justify-center gap-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleSaveInlineItemEdit(rowKey)}
+                                        className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-2 py-1 rounded text-[11px] cursor-pointer"
+                                      >
+                                        Save
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={handleCancelInlineItemEdit}
+                                        className="bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold px-2 py-1 rounded text-[11px] cursor-pointer"
+                                      >
+                                        Cancel
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            }
+                            return (
+                              <tr key={rowKey} className="hover:bg-slate-50 transition">
+                                <td className="py-2.5 px-3">
+                                  <span className="bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold px-2 py-0.5 rounded text-[11px]">
+                                    {item.supplierName || 'General'}
+                                  </span>
+                                </td>
+                                <td className="py-2.5 px-3 font-mono font-bold text-blue-700">{item.itemCode}</td>
+                                <td className="py-2.5 px-3 font-mono text-slate-500">{item.barcode || '-'}</td>
+                                <td className="py-2.5 px-3 font-bold text-slate-900">{item.description}</td>
+                                <td className="py-2.5 px-3">
+                                  <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded text-[10px] font-semibold">
+                                    {item.category}
+                                  </span>
+                                </td>
+                                <td className="py-2.5 px-3 text-center font-mono font-bold text-slate-800">
+                                  {item.qtyOnHand} {item.stockUnit || ''}
+                                </td>
+                                <td className="py-2.5 px-3 text-right font-mono text-slate-600">
+                                  {Number(item.costPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                </td>
+                                <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-900">
+                                  {Number(item.sellingPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                </td>
+                                <td className="py-2.5 px-3 text-center font-mono text-[11px] text-slate-600">
+                                  {item.stockDate || item.updatedAt?.slice(0, 10) || '-'}
+                                  {item.stockTime ? ` ${item.stockTime}` : ''}
+                                </td>
+                                <td className="py-2.5 px-3 text-center">
+                                  <div className="flex items-center justify-center gap-1.5">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleStartInlineItemEdit(item)}
+                                      className="bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold px-2 py-1 rounded text-xs transition flex items-center gap-1 cursor-pointer"
+                                      title="Edit Item"
+                                    >
+                                      <Edit3 className="w-3 h-3" />
+                                      Edit
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteItem(item.id || item._id || item.itemCode, item.description)}
+                                      className="bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold px-2 py-1 rounded text-xs transition flex items-center gap-1 cursor-pointer"
+                                      title="Delete Item"
+                                    >
+                                      <Trash2 className="w-3 h-3" />
+                                      Delete
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          });
                         })()}
                       </tbody>
                     </table>
@@ -3917,12 +4377,7 @@ export default function ServiceCenterApp() {
                               Cancel
                             </button>
                           </div>
-                        ) : (
-                          <span className="text-xs text-slate-500 font-medium flex items-center gap-1">
-                            <Plus className="w-3.5 h-3.5 text-emerald-600" />
-                            Type vehicle number to register new
-                          </span>
-                        )}
+                        ) : null}
                       </div>
                     </div>
 
@@ -4601,7 +5056,7 @@ export default function ServiceCenterApp() {
                       </div>
                     </div>
 
-                    <form onSubmit={handleSaveServiceRecord} className="space-y-6">
+                    <form onSubmit={handleSaveServiceRecord} noValidate className="space-y-6">
                       {/* Service Metadata Row */}
                       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200">
                         <div>
@@ -4654,29 +5109,19 @@ export default function ServiceCenterApp() {
                           />
                         </div>
 
-                        <div className="space-y-1.5">
-                          <div className="flex items-center justify-between mb-1">
-                            <label className="block text-xs font-bold text-slate-700 uppercase flex items-center gap-1.5">
-                              <Wrench className="w-3.5 h-3.5 text-indigo-600" />
-                              Service / Job Type *
-                            </label>
-                            <button
-                              type="button"
-                              onClick={() => setActiveTab('Job')}
-                              className="text-[11px] bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded border border-indigo-200 font-bold flex items-center gap-1 cursor-pointer transition shadow-2xs"
-                            >
-                              + ADD JOB
-                            </button>
-                          </div>
-
+                        <div className="space-y-1.5 relative">
                           <div className="grid grid-cols-1 md:grid-cols-12 gap-2">
-                            {/* Search Input for Dropdown */}
+                            {/* Search Input */}
                             <div className="md:col-span-5 relative">
                               <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                               <input
                                 type="text"
                                 value={serviceTypeSearchQuery}
-                                onChange={(e) => setServiceTypeSearchQuery(e.target.value)}
+                                onFocus={() => setShowServicePickerDropdown(true)}
+                                onChange={(e) => {
+                                  setServiceTypeSearchQuery(e.target.value);
+                                  setShowServicePickerDropdown(true);
+                                }}
                                 placeholder="Search service by name or code..."
                                 className="w-full bg-slate-50 border-2 border-indigo-400 focus:border-indigo-600 rounded-lg pl-9 pr-7 py-2 text-sm font-bold text-slate-900 outline-none focus:bg-white shadow-xs"
                               />
@@ -4692,87 +5137,118 @@ export default function ServiceCenterApp() {
                               )}
                             </div>
 
-                            {/* Dropdown Selector */}
-                            <div className="md:col-span-7">
-                              <select
-                                value={serviceForm.serviceType}
-                                onChange={(e) => {
-                                  handleServiceTypeChange(e.target.value);
-                                  setServiceTypeSearchQuery('');
-                                }}
-                                className="w-full bg-white border-2 border-slate-300 rounded-lg px-3 py-2 text-sm font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer shadow-xs"
-                                required
+                            {/* Dropdown Trigger Button */}
+                            <div className="md:col-span-7 relative">
+                              <button
+                                type="button"
+                                onClick={() => setShowServicePickerDropdown((prev) => !prev)}
+                                className="w-full bg-white border-2 border-slate-300 hover:border-indigo-400 rounded-lg px-3 py-2 text-sm font-bold text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer shadow-xs flex items-center justify-between"
                               >
-                                <option value="">-- Choose Service Type ({jobs.length} in Job Master) --</option>
+                                <span className="truncate">
+                                  {serviceForm.selectedServices && serviceForm.selectedServices.length > 0
+                                    ? `${serviceForm.selectedServices.length} Service${serviceForm.selectedServices.length > 1 ? 's' : ''} Selected`
+                                    : `-- Choose Service Type (${jobs.length} in Job Master) --`}
+                                </span>
+                                <ChevronDown className={`w-4 h-4 text-slate-500 transition-transform ${showServicePickerDropdown ? 'rotate-180' : ''}`} />
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Multi-Select Tick Dropdown Panel */}
+                          {showServicePickerDropdown && jobs.length > 0 && (
+                            <div className="bg-white border-2 border-indigo-300 rounded-xl shadow-lg p-3 space-y-2 z-30">
+                              <div className="max-h-48 overflow-y-auto">
                                 {(() => {
                                   const q = serviceTypeSearchQuery.trim().toLowerCase();
-                                  const filtered = q
+                                  const matches = q
                                     ? jobs.filter(j =>
                                       (j.jobName && j.jobName.toLowerCase().includes(q)) ||
                                       (j.jobCode && j.jobCode.toLowerCase().includes(q)) ||
                                       (j.category && j.category.toLowerCase().includes(q))
                                     )
                                     : jobs;
-                                  return filtered.map((j, idx) => (
-                                    <option key={`${j.id || j._id || j.jobCode || 'job'}-${idx}`} value={j.jobName}>
-                                      {j.jobName} ({j.category} — LKR {Number(j.standardLaborFee).toLocaleString()})
-                                    </option>
-                                  ));
-                                })()}
-                              </select>
-                            </div>
-                          </div>
-
-                          {/* Matching Quick-Select Pills */}
-                          {serviceTypeSearchQuery.trim() && (
-                            <div className="mt-2 flex flex-wrap items-center gap-1.5 pt-2 border-t border-slate-100">
-                              <span className="text-[10px] text-indigo-800 font-bold uppercase tracking-wider">Matching Services:</span>
-                              {(() => {
-                                const q = serviceTypeSearchQuery.trim().toLowerCase();
-                                const matches = jobs.filter(j =>
-                                  (j.jobName && j.jobName.toLowerCase().includes(q)) ||
-                                  (j.jobCode && j.jobCode.toLowerCase().includes(q)) ||
-                                  (j.category && j.category.toLowerCase().includes(q))
-                                );
-                                if (matches.length === 0) {
-                                  return <span className="text-xs text-slate-400 italic">No services match &quot;{serviceTypeSearchQuery}&quot;</span>;
-                                }
-                                return matches.slice(0, 8).map((j, idx) => {
-                                  const isSelected = serviceForm.serviceType === j.jobName;
+                                  if (matches.length === 0) {
+                                    return <span className="text-xs text-slate-400 italic px-1">No services match &quot;{serviceTypeSearchQuery}&quot;</span>;
+                                  }
                                   return (
-                                    <button
-                                      key={`${j.id || j._id || j.jobCode || 'job'}-${idx}`}
-                                      type="button"
-                                      onClick={() => {
-                                        handleServiceTypeChange(j.jobName);
-                                        setServiceTypeSearchQuery('');
-                                      }}
-                                      className={`px-2.5 py-1 rounded text-xs font-bold transition flex items-center gap-1.5 cursor-pointer border ${isSelected
-                                        ? 'bg-indigo-600 text-white border-indigo-700 shadow-sm'
-                                        : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border-indigo-200'
-                                        }`}
-                                    >
-                                      <span>{j.jobName}</span>
-                                      <span className={`text-[10px] px-1 rounded ${isSelected ? 'bg-indigo-700 text-indigo-100' : 'bg-white text-indigo-700 border border-indigo-200'}`}>
-                                        LKR {Number(j.standardLaborFee).toLocaleString()}
-                                      </span>
-                                    </button>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                                      {matches.map((j, idx) => {
+                                        const isSelected = (serviceForm.selectedServices || []).some(s => s.jobName === j.jobName);
+                                        return (
+                                          <label
+                                            key={`${j.id || j._id || j.jobCode || 'job'}-${idx}`}
+                                            className={`px-2.5 py-1.5 rounded text-xs font-bold transition flex items-center gap-2 cursor-pointer border ${isSelected
+                                              ? 'bg-indigo-50 text-indigo-900 border-indigo-400'
+                                              : 'bg-slate-50 hover:bg-slate-100 text-slate-800 border-slate-200'
+                                              }`}
+                                          >
+                                            <input
+                                              type="checkbox"
+                                              checked={isSelected}
+                                              onChange={() => {
+                                                if (isSelected) {
+                                                  handleRemoveSelectedService(j.jobName);
+                                                } else {
+                                                  handleServiceTypeChange(j.jobName);
+                                                }
+                                              }}
+                                              className="w-3.5 h-3.5 accent-indigo-600 cursor-pointer shrink-0"
+                                            />
+                                            <span className="truncate">{j.jobName}</span>
+                                          </label>
+                                        );
+                                      })}
+                                    </div>
                                   );
-                                });
-                              })()}
+                                })()}
+                              </div>
+                              <div className="flex justify-end pt-1 border-t border-slate-100">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setShowServicePickerDropdown(false);
+                                    setServiceTypeSearchQuery('');
+                                  }}
+                                  className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-3 py-1 rounded-lg cursor-pointer"
+                                >
+                                  Done
+                                </button>
+                              </div>
                             </div>
                           )}
 
-                          {/* Selected Service Indicator */}
-                          {serviceForm.serviceType && (
-                            <div className="text-[11px] text-slate-500 flex items-center gap-2 pt-0.5">
-                              <span className="font-semibold text-slate-700">Selected Service:</span>
-                              <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded font-bold">
-                                ✓ {serviceForm.serviceType}
-                              </span>
-                              <span className="text-slate-500 font-mono">
-                                (Standard Labor: LKR {Number(serviceForm.laborCharges).toLocaleString()})
-                              </span>
+                          {/* Selected Services Display (1-2 clean rows after selecting) */}
+                          {(serviceForm.selectedServices?.length > 0 || serviceForm.serviceType) && (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 pt-1">
+                              {serviceForm.selectedServices && serviceForm.selectedServices.length > 0 ? (
+                                serviceForm.selectedServices.map((srv, idx) => (
+                                  <div
+                                    key={srv.jobName}
+                                    className="bg-emerald-50 text-emerald-900 border border-emerald-200 px-2.5 py-1 rounded text-[11px] font-bold flex items-center justify-between gap-2"
+                                  >
+                                    <span className="truncate">
+                                      {idx + 1}. {srv.jobName}
+                                    </span>
+                                    <div className="flex items-center gap-1.5 shrink-0">
+                                      <span className="font-mono text-[10px] text-emerald-700">
+                                        LKR {Number(srv.laborFee || 0).toLocaleString()}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleRemoveSelectedService(srv.jobName)}
+                                        className="text-emerald-700 hover:text-rose-600 cursor-pointer"
+                                        title="Remove service"
+                                      >
+                                        <X className="w-3 h-3" />
+                                      </button>
+                                    </div>
+                                  </div>
+                                ))
+                              ) : (
+                                <div className="bg-emerald-50 text-emerald-800 border border-emerald-200 px-2.5 py-1 rounded text-[11px] font-bold">
+                                  ✓ {serviceForm.serviceType} (LKR {Number(serviceForm.laborCharges).toLocaleString()})
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
@@ -4810,30 +5286,11 @@ export default function ServiceCenterApp() {
                               Used Items & Parts Consumed During Service
                             </label>
                           </div>
-
-                          <div className="flex flex-wrap items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setActiveTab('Supplier');
-                                setSupplierSubTab('register');
-                              }}
-                              className="text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-3 py-1 rounded transition flex items-center gap-1 cursor-pointer shadow-xs"
-                              title="Go to Suppliers -> 1. Register Suppliers (Supplier Master)"
-                            >
-                              <Plus className="w-3.5 h-3.5" />
-                              + Add New Supplier Part While Servicing
-                            </button>
-                          </div>
                         </div>
 
                         {/* Quick Select Supplier Item Dropdown Bar with Supplier Filter */}
                         <div className="bg-gradient-to-r from-blue-50 via-indigo-50 to-blue-50 border border-blue-200 rounded-xl p-4 mb-3 space-y-3 shadow-2xs">
-                          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-blue-200/70 pb-2">
-                            <label className="text-xs font-bold uppercase tracking-wider text-blue-900 flex items-center gap-1.5">
-                              <Package className="w-4 h-4 text-blue-700" />
-                              Pick Supplier Replacement Part for this Service:
-                            </label>
+                          <div className="flex flex-wrap items-center justify-end gap-2 border-b border-blue-200/70 pb-2">
                             <div className="flex items-center gap-3">
                               <span className="text-[11px] text-blue-700 font-semibold">
                                 Filter by Vendor:
@@ -4901,25 +5358,22 @@ export default function ServiceCenterApp() {
                           </div>
                         </div>
 
-                        <div className="border border-slate-200 rounded-xl overflow-hidden shadow-xs">
+                        <div className="border border-slate-200 rounded-xl overflow-x-auto shadow-xs">
                           <table className="w-full text-xs text-left">
                             <thead className="bg-slate-100 border-b border-slate-200 text-slate-700 font-bold uppercase">
                               <tr>
                                 <th className="py-2.5 px-3 w-10 text-center">#</th>
-                                <th className="py-2.5 px-3 w-36">Supplier / Brand</th>
                                 <th className="py-2.5 px-3">Item / Part Description & Code</th>
-                                <th className="py-2.5 px-3 w-44">Select from Catalog</th>
-                                <th className="py-2.5 px-3 w-20 text-center">Qty</th>
-                                <th className="py-2.5 px-3 w-28 text-right">Unit Price (LKR)</th>
-                                <th className="py-2.5 px-3 w-32 text-right">Line Total (LKR)</th>
+                                <th className="py-2.5 px-3 w-32 text-right">Unit Price (LKR)</th>
+                                <th className="py-2.5 px-3 w-36 text-right">Total Price (LKR)</th>
                                 <th className="py-2.5 px-3 w-10 text-center"></th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-200 bg-white">
                               {serviceForm.parts.length === 0 ? (
                                 <tr>
-                                  <td colSpan="8" className="py-6 text-center text-slate-400">
-                                    No used items added yet. Choose a supplier part above or click "+ Add New Supplier Part While Servicing".
+                                  <td colSpan="5" className="py-6 text-center text-slate-400">
+                                    No items added yet. Choose an item from Available Parts Catalog above and click &quot;Add to Vehicle Bill&quot;.
                                   </td>
                                 </tr>
                               ) : (
@@ -4927,52 +5381,13 @@ export default function ServiceCenterApp() {
                                   <tr key={idx} className="hover:bg-slate-50/50">
                                     <td className="p-2 text-center font-mono text-slate-400">{idx + 1}</td>
                                     <td className="p-2">
-                                      <input
-                                        type="text"
-                                        value={p.supplier || p.supplierName || ''}
-                                        onChange={(e) => {
-                                          const val = e.target.value;
-                                          setServiceForm(prev => {
-                                            const updated = [...prev.parts];
-                                            updated[idx] = { ...updated[idx], supplier: val, supplierName: val };
-                                            return { ...prev, parts: updated };
-                                          });
-                                        }}
-                                        placeholder="Supplier Name..."
-                                        className="w-full bg-blue-50/60 border border-blue-200 text-blue-900 font-semibold rounded px-2 py-1 text-xs outline-none focus:bg-white"
-                                      />
-                                    </td>
-                                    <td className="p-2">
-                                      <input
-                                        type="text"
-                                        value={p.name}
-                                        onChange={(e) => handlePartFieldChange(idx, 'name', e.target.value)}
-                                        placeholder="e.g. Synthetic Engine Oil (4L)..."
-                                        className="w-full bg-slate-50 border border-slate-300 rounded px-2.5 py-1 text-xs text-slate-900 outline-none focus:bg-white"
-                                      />
-                                    </td>
-                                    <td className="p-2">
-                                      <select
-                                        value={p.itemId || p.code || ''}
-                                        onChange={(e) => handleSelectCatalogItem(idx, e.target.value)}
-                                        className="w-full bg-white border border-slate-300 rounded px-2 py-1 text-xs text-slate-700 outline-none"
-                                      >
-                                        <option value="">-- Quick Pick Item --</option>
-                                        {catalogItems.map((cat, catIdx) => (
-                                          <option key={cat.id || cat._id || `${cat.itemCode}-${catIdx}`} value={cat.id || cat._id || cat.itemCode}>
-                                            {cat.supplierName ? `[${cat.supplierName}] ` : ''}{cat.description} ({cat.itemCode}) — LKR {cat.sellingPrice.toLocaleString()}
-                                          </option>
-                                        ))}
-                                      </select>
-                                    </td>
-                                    <td className="p-2">
-                                      <input
-                                        type="number"
-                                        value={p.quantity}
-                                        onChange={(e) => handlePartFieldChange(idx, 'quantity', e.target.value)}
-                                        min="1"
-                                        className="w-full bg-slate-50 border border-slate-300 rounded px-2 py-1 text-xs text-center text-slate-900 outline-none font-bold"
-                                      />
+                                      <div className="font-semibold text-slate-900">
+                                        {p.name || '-'}
+                                        {p.code ? <span className="ml-1.5 font-mono text-[11px] text-blue-700">({p.code})</span> : null}
+                                      </div>
+                                      {Number(p.quantity) > 1 && (
+                                        <div className="text-[10px] text-slate-500">Qty: {p.quantity}</div>
+                                      )}
                                     </td>
                                     <td className="p-2">
                                       <input
@@ -4990,7 +5405,7 @@ export default function ServiceCenterApp() {
                                       <button
                                         type="button"
                                         onClick={() => handleRemovePart(idx)}
-                                        className="text-slate-400 hover:text-rose-600 transition p-1"
+                                        className="text-slate-400 hover:text-rose-600 transition p-1 cursor-pointer"
                                         title="Remove item"
                                       >
                                         <Trash2 className="w-3.5 h-3.5" />
@@ -5002,7 +5417,7 @@ export default function ServiceCenterApp() {
                             </tbody>
                             <tfoot className="bg-slate-50 border-t border-slate-200">
                               <tr>
-                                <td colSpan="6" className="py-2.5 px-4 font-bold text-right text-slate-700">
+                                <td colSpan="3" className="py-2.5 px-4 font-bold text-right text-slate-700">
                                   Total Used Supplier Items Subtotal:
                                 </td>
                                 <td className="py-2.5 px-3 text-right font-mono font-black text-blue-700 text-sm">
@@ -5086,53 +5501,67 @@ export default function ServiceCenterApp() {
                             </div>
 
                             {/* Line-by-line calculation */}
-                            <div className="space-y-2.5 text-xs">
-                              {/* 1. Base Service / Labor Fee */}
-                              <div className="flex items-center justify-between">
-                                <div>
-                                  <span className="font-bold text-slate-800 block">
-                                    1. {serviceForm.serviceType} Base Labor Fee:
+                            <div className="space-y-3 text-xs">
+                              {/* Topic 1: Service (numbered 1, 2, 3...) */}
+                              <div className="space-y-1.5">
+                                <div className="flex items-center justify-between">
+                                  <span className="font-black uppercase tracking-wider text-slate-700 text-[11px]">
+                                    Service
                                   </span>
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-[11px] text-slate-500 font-semibold">Total Service Fee:</span>
+                                    <div className="w-28">
+                                      <input
+                                        type="number"
+                                        value={serviceForm.laborCharges}
+                                        onChange={(e) => setServiceForm({ ...serviceForm, laborCharges: e.target.value })}
+                                        min="0"
+                                        className="w-full bg-white border border-slate-300 rounded px-2 py-1 text-right text-xs font-mono font-bold text-slate-900 outline-none focus:ring-1 focus:ring-blue-500"
+                                      />
+                                    </div>
+                                  </div>
                                 </div>
-                                <div className="w-32">
-                                  <input
-                                    type="number"
-                                    value={serviceForm.laborCharges}
-                                    onChange={(e) => setServiceForm({ ...serviceForm, laborCharges: e.target.value })}
-                                    min="0"
-                                    className="w-full bg-white border border-slate-300 rounded px-2 py-1 text-right text-xs font-mono font-bold text-slate-900 outline-none focus:ring-1 focus:ring-blue-500"
-                                  />
+
+                                <div className="bg-white/90 border border-slate-200 rounded-lg p-2.5 space-y-1 shadow-2xs">
+                                  {serviceForm.selectedServices && serviceForm.selectedServices.length > 0 ? (
+                                    serviceForm.selectedServices.map((srv, idx) => (
+                                      <div key={srv.jobName} className="flex justify-between items-center text-xs text-slate-800">
+                                        <span className="font-bold">
+                                          {idx + 1}. {srv.jobName}
+                                        </span>
+                                        <span className="font-mono font-bold text-slate-900">
+                                          LKR {Number(srv.laborFee || 0).toLocaleString()}
+                                        </span>
+                                      </div>
+                                    ))
+                                  ) : (
+                                    <div className="flex justify-between items-center text-xs text-slate-800">
+                                      <span className="font-bold">1. {serviceForm.serviceType || 'Service'}</span>
+                                      <span className="font-mono font-bold text-slate-900">
+                                        LKR {Number(serviceForm.laborCharges || 0).toLocaleString()}
+                                      </span>
+                                    </div>
+                                  )}
                                 </div>
                               </div>
 
-                              {/* 2. Used Items Total with Item Names List */}
+                              {/* Topic 2: Item (numbered 1, 2, 3...) */}
                               <div className="pt-2 border-t border-slate-200 space-y-1.5">
                                 <div className="flex items-center justify-between">
-                                  <div>
-                                    <span className="font-bold text-slate-800 block">
-                                      2. Used Items & Consumables Total:
-                                    </span>
-                                  </div>
+                                  <span className="font-black uppercase tracking-wider text-slate-700 text-[11px]">
+                                    Item
+                                  </span>
                                   <span className="font-mono font-black text-blue-800 text-sm">
                                     LKR {usedItemsSubtotal.toLocaleString()}
                                   </span>
                                 </div>
 
-                                {/* Item List with Name */}
                                 {serviceForm.parts.length > 0 ? (
                                   <div className="bg-white/90 border border-slate-200 rounded-lg p-2.5 space-y-1.5 shadow-2xs">
-                                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-600 block border-b border-slate-100 pb-1">
-                                      Included Parts & Consumables:
-                                    </span>
                                     {serviceForm.parts.map((p, idx) => (
                                       <div key={idx} className="flex justify-between items-center text-xs text-slate-700">
                                         <div className="truncate max-w-[240px]">
-                                          <span className="font-bold text-slate-900">• {p.name || 'Custom Part'}</span>
-                                          {p.supplier ? (
-                                            <span className="text-[10px] text-blue-700 font-semibold bg-blue-50 px-1 py-0.2 rounded ml-1 border border-blue-200">
-                                              {p.supplier}
-                                            </span>
-                                          ) : null}
+                                          <span className="font-bold text-slate-900">{idx + 1}. {p.name || 'Custom Part'}</span>
                                           <span className="text-slate-500 font-mono text-[11px] ml-1">
                                             (Qty: {p.quantity || 1} × LKR {Number(p.unitPrice || 0).toLocaleString()})
                                           </span>
@@ -5183,10 +5612,13 @@ export default function ServiceCenterApp() {
                           <div className="pt-2">
                             <button
                               type="submit"
-                              className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3.5 px-4 rounded-xl text-sm shadow-md flex items-center justify-center gap-2 transition"
+                              disabled={savingService}
+                              className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-bold py-3.5 px-4 rounded-xl text-sm shadow-md flex items-center justify-center gap-2 transition cursor-pointer"
                             >
                               <Save className="w-5 h-5" />
-                              Save Service & Generate Customer Bill (LKR {totalServiceCharges.toLocaleString()})
+                              {savingService
+                                ? 'Saving Service...'
+                                : `Save Service & Generate Customer Bill (LKR ${totalServiceCharges.toLocaleString()})`}
                             </button>
                           </div>
                         </div>
@@ -5204,9 +5636,6 @@ export default function ServiceCenterApp() {
                           <History className="w-5 h-5 text-blue-600" />
                           Maintenance & Billing History for Vehicle {currentServiceVehicle.vehicleNo}
                         </h2>
-                        <p className="text-xs text-slate-500">
-                          Chronological service log across all past visits, detailing service fees, used parts, and total charges.
-                        </p>
                       </div>
                       <div className="flex items-center gap-2">
                         <button
@@ -5241,186 +5670,155 @@ export default function ServiceCenterApp() {
                     ) : (
                       <div className="space-y-4">
                         {serviceHistory.map((srv, idx) => {
-                          const prevSrv = serviceHistory[idx + 1];
                           const odo = srv.meterReading || srv.odometer || 0;
-                          const prevOdo = prevSrv ? (prevSrv.meterReading || prevSrv.odometer || 0) : null;
-                          const mileageDiff = prevOdo ? (odo - prevOdo) : null;
-
                           const partsAmount = srv.partsTotal || (srv.parts ? srv.parts.reduce((s, p) => s + (p.total || 0), 0) : 0);
                           const laborFee = srv.jobTotal || srv.laborCharges || 0;
                           const finalTotal = srv.billTotal || srv.grandTotal || srv.totalAmount || 0;
+                          const usedParts = srv.parts && srv.parts.length > 0
+                            ? srv.parts
+                            : (srv.items ? srv.items.filter(i => i.itemType === 'item') : []);
+                          const jobLines = srv.items ? srv.items.filter(i => i.itemType === 'job') : [];
 
                           return (
                             <div
                               key={srv._id || srv.invoiceNo || idx}
-                              className="bg-slate-50 border border-slate-200 rounded-xl p-5 hover:border-blue-300 transition-all space-y-3"
+                              className="border border-slate-200 rounded-xl overflow-hidden bg-white shadow-xs"
                             >
-                              {/* Service Card Header */}
-                              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200/80 pb-3">
+                              {/* Row 1: Date & Time */}
+                              <div className="bg-slate-900 text-white px-4 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs">
                                 <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-                                  <span className="bg-blue-600 text-white font-mono font-bold text-xs px-2.5 py-1 rounded">
+                                  <span className="font-mono font-bold flex items-center gap-1.5">
+                                    <Calendar className="w-3.5 h-3.5 text-blue-400" />
+                                    {srv.serviceDate || '-'} {srv.serviceTime ? `• ${srv.serviceTime}` : ''}
+                                  </span>
+                                  <span className="bg-blue-600 text-white font-mono font-bold text-[10px] px-2 py-0.5 rounded">
                                     {srv.invoiceNo || srv.serviceNo || `SRV-${idx + 1}`}
                                   </span>
-                                  <span className="font-bold text-sm text-slate-900">
-                                    {srv.serviceType || 'Service Visit'}
+                                  {odo ? (
+                                    <span className="bg-slate-800 text-slate-200 font-mono text-[11px] px-2 py-0.5 rounded border border-slate-700">
+                                      {odo.toLocaleString()} KM
+                                    </span>
+                                  ) : null}
+                                </div>
+                                <div className="font-mono font-black text-sm text-emerald-300">
+                                  Total: LKR {Number(finalTotal).toLocaleString()}
+                                </div>
+                              </div>
+
+                              {/* Row 2: Service / Item & Price List */}
+                              <div className="overflow-x-auto">
+                                <table className="w-full text-left text-xs border-collapse">
+                                  <thead>
+                                    <tr className="bg-slate-100 text-slate-700 font-bold uppercase text-[10px] border-b border-slate-200">
+                                      <th className="py-2 px-4">Service / Item</th>
+                                      <th className="py-2 px-4 text-right w-36">Price (LKR)</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-slate-100">
+                                    {jobLines.length > 0 ? (
+                                      jobLines.map((j, jIdx) => (
+                                        <tr key={`job-${jIdx}`} className="hover:bg-slate-50">
+                                          <td className="py-2 px-4 font-bold text-slate-900">
+                                            {jIdx + 1}. {j.description}
+                                          </td>
+                                          <td className="py-2 px-4 text-right font-mono font-bold text-slate-800">
+                                            {Number(j.amount ?? j.rate ?? 0).toLocaleString()}
+                                          </td>
+                                        </tr>
+                                      ))
+                                    ) : (
+                                      <tr className="hover:bg-slate-50">
+                                        <td className="py-2 px-4 font-bold text-slate-900">
+                                          {srv.serviceType || 'Service Visit'}
+                                        </td>
+                                        <td className="py-2 px-4 text-right font-mono font-bold text-slate-800">
+                                          {Number(laborFee).toLocaleString()}
+                                        </td>
+                                      </tr>
+                                    )}
+
+                                    {usedParts.map((p, pIdx) => (
+                                      <tr key={`part-${pIdx}`} className="hover:bg-slate-50">
+                                        <td className="py-2 px-4 text-slate-700">
+                                          <span className="font-semibold text-slate-900">{p.name || p.description}</span>
+                                          <span className="text-slate-400 ml-1.5 font-mono text-[11px]">
+                                            ({p.quantity || p.qty || 1}x @ LKR {Number(p.unitPrice || p.rate || 0).toLocaleString()})
+                                          </span>
+                                        </td>
+                                        <td className="py-2 px-4 text-right font-mono font-bold text-slate-800">
+                                          {Number(p.total || p.amount || 0).toLocaleString()}
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                  <tfoot className="bg-slate-50 border-t border-slate-200 font-bold">
+                                    <tr>
+                                      <td className="py-2 px-4 text-right text-slate-600 text-[11px]">
+                                        Service: LKR {Number(laborFee).toLocaleString()} | Items: LKR {Number(partsAmount).toLocaleString()}
+                                      </td>
+                                      <td className="py-2 px-4 text-right font-mono font-black text-blue-700 text-sm">
+                                        LKR {Number(finalTotal).toLocaleString()}
+                                      </td>
+                                    </tr>
+                                  </tfoot>
+                                </table>
+                              </div>
+
+                              {/* Row 3: Handled By & Payment, Next Recommended, Actions */}
+                              <div className="bg-slate-50 border-t border-slate-200 px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs">
+                                <div className="flex flex-wrap items-center gap-3 text-slate-700">
+                                  <span>
+                                    <span className="text-slate-500">Handled by:</span>{' '}
+                                    <strong>{srv.technician || 'Staff'}</strong>
                                   </span>
-                                  <span className="text-xs text-slate-500 font-mono flex items-center gap-1">
-                                    <Calendar className="w-3.5 h-3.5" />
-                                    {srv.serviceDate} {srv.serviceTime ? `at ${srv.serviceTime}` : ''}
+                                  <span className="text-slate-300">|</span>
+                                  <span>
+                                    <span className="text-slate-500">Payment:</span>{' '}
+                                    <strong>{srv.paymentType || 'CASH'}</strong>
                                   </span>
+                                  {srv.technicianNotes && (
+                                    <span className="text-[11px] italic text-slate-500">
+                                      — &quot;{srv.technicianNotes}&quot;
+                                    </span>
+                                  )}
                                 </div>
 
-                                <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-                                  <span className="font-mono text-sm font-bold text-slate-800 bg-white border border-slate-200 px-3 py-1 rounded-lg flex items-center gap-1">
-                                    <Gauge className="w-4 h-4 text-blue-600" />
-                                    {odo ? odo.toLocaleString() : '-'} KM
-                                    {mileageDiff !== null && mileageDiff > 0 && (
-                                      <span className="text-[10px] text-emerald-600 ml-1">
-                                        (+{mileageDiff.toLocaleString()} km)
-                                      </span>
-                                    )}
-                                  </span>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  {(srv.nextServiceMeter || srv.nextServiceMileage || srv.nextServiceDate) && (
+                                    <div className="bg-amber-50 border border-amber-200 text-amber-900 px-2.5 py-1 rounded text-[11px] font-semibold">
+                                      Next Recommended: {(srv.nextServiceMeter || srv.nextServiceMileage)
+                                        ? `${(srv.nextServiceMeter || srv.nextServiceMileage).toLocaleString()} KM`
+                                        : ''}
+                                      {srv.nextServiceDate ? ` on or before ${srv.nextServiceDate}` : ''}
+                                    </div>
+                                  )}
 
-                                  <div className="text-right">
-                                    <span className="block text-[10px] uppercase font-bold text-slate-400">Total Charges</span>
-                                    <span className="font-mono text-base font-black text-blue-700">
-                                      LKR {finalTotal.toLocaleString()}
-                                    </span>
-                                  </div>
-
-                                  <button
-                                    onClick={() => {
-                                      setServiceToAppendParts(srv);
-                                      setAppendPartSelectedCode('');
-                                      setAppendPartSupplierFilter('ALL');
-                                      setAppendPartQty(1);
-                                    }}
-                                    className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-3 py-1.5 rounded flex items-center gap-1.5 shadow-xs transition cursor-pointer"
-                                    title="Add supplier items to this bill while service is being completed"
-                                  >
-                                    <Plus className="w-3.5 h-3.5 text-white" />
-                                    + Add Parts to Bill
-                                  </button>
+                                  {srv.nextServiceDate && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSendServiceReminder(srv)}
+                                      className={`px-2.5 py-1 rounded text-[11px] font-bold flex items-center gap-1 border transition cursor-pointer whitespace-nowrap ${srv.reminderSent
+                                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                                        : 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'
+                                        }`}
+                                      title={srv.reminderSent ? `Reminder sent (${srv.reminderSentAt?.slice(0, 10) || 'Done'}) - Click to resend` : 'Send Next Service Reminder Email via SMTP'}
+                                    >
+                                      <Mail className="w-3 h-3" />
+                                      {srv.reminderSent ? 'Reminder Sent' : 'Send Reminder Email'}
+                                    </button>
+                                  )}
 
                                   <a
                                     href={`/bill/${encodeURIComponent(srv._id || srv.id || srv.invoiceNo)}`}
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-3 py-1.5 rounded flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+                                    className="bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-bold px-2.5 py-1 rounded flex items-center gap-1 shadow-xs transition cursor-pointer whitespace-nowrap"
                                     title="Open Bill in Another Page to Print"
                                   >
-                                    <Printer className="w-3.5 h-3.5 text-white" />
-                                    Print Bill (New Page)
+                                    <Printer className="w-3 h-3 text-white" />
+                                    Print Bill
                                   </a>
                                 </div>
-                              </div>
-
-                              {/* Charges Count Breakdown Badges */}
-                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 bg-white border border-slate-200 rounded-lg p-2.5 text-xs">
-                                <div className="flex justify-between items-center px-2">
-                                  <span className="text-slate-500 font-medium">Service / Labor Fee:</span>
-                                  <span className="font-mono font-bold text-slate-800">LKR {laborFee.toLocaleString()}</span>
-                                </div>
-                                <div className="flex justify-between items-center px-2 sm:border-x border-slate-200">
-                                  <span className="text-slate-500 font-medium">Used Items Total:</span>
-                                  <span className="font-mono font-bold text-blue-700">LKR {partsAmount.toLocaleString()}</span>
-                                </div>
-                                <div className="flex justify-between items-center px-2">
-                                  <span className="text-slate-500 font-medium">Grand Total Charges:</span>
-                                  <span className="font-mono font-black text-slate-900">LKR {finalTotal.toLocaleString()}</span>
-                                </div>
-                              </div>
-
-                              {/* Checklist Badges */}
-                              {srv.checklist && srv.checklist.length > 0 && (
-                                <div>
-                                  <span className="text-[11px] font-bold uppercase text-slate-500 block mb-1">
-                                    Work & Maintenance Checked:
-                                  </span>
-                                  <div className="flex flex-wrap gap-1.5">
-                                    {srv.checklist.map((c, i) => (
-                                      <span
-                                        key={i}
-                                        className="text-[11px] bg-emerald-50 text-emerald-800 border border-emerald-200 font-medium px-2 py-0.5 rounded-full flex items-center gap-1"
-                                      >
-                                        <span className="text-emerald-600 font-bold">✓</span>
-                                        {c}
-                                      </span>
-                                    ))}
-                                  </div>
-                                </div>
-                              )}
-
-                              {/* Replaced Parts Breakdown - Displays Exact Supplier Items Used */}
-                              {((srv.parts && srv.parts.length > 0) || (srv.items && srv.items.length > 0)) && (
-                                <div className="bg-white rounded-xl border border-slate-200 p-3.5 space-y-2">
-                                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2">
-                                    <span className="text-xs font-bold uppercase tracking-wide text-slate-800 flex items-center gap-1.5">
-                                      <Package className="w-4 h-4 text-blue-600" />
-                                      Supplier Items & Consumables Used ({(srv.parts || srv.items.filter(i => i.itemType === 'item')).length}):
-                                    </span>
-                                    <div className="flex items-center gap-2">
-                                      <span className="text-xs font-mono font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
-                                        Parts Subtotal: LKR {partsAmount.toLocaleString()}
-                                      </span>
-                                    </div>
-                                  </div>
-                                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5 text-xs">
-                                    {(srv.parts || srv.items.filter(i => i.itemType === 'item')).map((p, pIdx) => (
-                                      <div key={pIdx} className="bg-slate-50 hover:bg-blue-50/40 border border-slate-200 rounded-lg p-2.5 flex flex-col justify-between gap-1.5 transition">
-                                        <div className="flex items-start justify-between gap-1.5">
-                                          <span className="font-bold text-slate-900 leading-snug">
-                                            {p.name || p.description}
-                                          </span>
-                                          <span className="text-[10px] bg-blue-100 text-blue-800 font-bold px-1.5 py-0.5 rounded shrink-0 border border-blue-200">
-                                            {p.supplier || p.supplierName || 'General'}
-                                          </span>
-                                        </div>
-                                        <div className="flex items-center justify-between text-[11px] text-slate-600 pt-1.5 border-t border-slate-200 font-mono">
-                                          <span>{p.quantity || p.qty}x @ LKR {Number(p.unitPrice || p.rate || 0).toLocaleString()}</span>
-                                          <span className="font-bold text-slate-900">LKR {(p.total || p.amount || 0).toLocaleString()}</span>
-                                        </div>
-                                      </div>
-                                    ))}
-                                  </div>
-                                </div>
-                              )}
-
-                              {/* Footer */}
-                              <div className="flex flex-wrap items-center justify-between text-xs text-slate-600 pt-1">
-                                <div>
-                                  {srv.technicianNotes && (
-                                    <p className="italic text-slate-600">
-                                      <strong>Notes:</strong> "{srv.technicianNotes}"
-                                    </p>
-                                  )}
-                                  <span className="text-[11px] text-slate-500">
-                                    Handled by: <strong>{srv.technician || 'Staff'}</strong> | Payment: <strong>{srv.paymentType || 'CASH'}</strong>
-                                  </span>
-                                </div>
-
-                                {(srv.nextServiceMeter || srv.nextServiceMileage || srv.nextServiceDate) && (
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <div className="bg-amber-50 border border-amber-200 text-amber-900 px-3 py-1 rounded text-xs font-semibold">
-                                      Next Recommended: {(srv.nextServiceMeter || srv.nextServiceMileage) ? `${(srv.nextServiceMeter || srv.nextServiceMileage).toLocaleString()} KM` : ''}
-                                      {srv.nextServiceDate ? ` on or before ${srv.nextServiceDate}` : ''}
-                                    </div>
-                                    {srv.nextServiceDate && (
-                                      <button
-                                        type="button"
-                                        onClick={() => handleSendServiceReminder(srv)}
-                                        className={`px-2.5 py-1 rounded text-xs font-bold flex items-center gap-1.5 border transition cursor-pointer ${srv.reminderSent
-                                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
-                                          : 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'
-                                          }`}
-                                        title={srv.reminderSent ? `Reminder sent (${srv.reminderSentAt?.slice(0, 10) || 'Done'}) - Click to resend` : 'Send Next Service Reminder Email via SMTP'}
-                                      >
-                                        <Mail className="w-3.5 h-3.5" />
-                                        {srv.reminderSent ? 'Reminder Sent' : 'Send Reminder Email'}
-                                      </button>
-                                    )}
-                                  </div>
-                                )}
                               </div>
                             </div>
                           );
@@ -5554,13 +5952,14 @@ export default function ServiceCenterApp() {
                       />
                     </div>
                     <div>
-                      <label className="block font-bold text-slate-700 mb-1">Estimated Duration</label>
+                      <label className="block font-bold text-slate-700 mb-1">Next Service Odometer (KM)</label>
                       <input
-                        type="text"
-                        value={jobForm.estimatedDuration}
-                        onChange={(e) => setJobForm({ ...jobForm, estimatedDuration: e.target.value })}
-                        placeholder="e.g. 45 mins / 2 Hours"
-                        className="w-full bg-white border border-slate-300 rounded px-2.5 py-1.5 text-slate-800 outline-none"
+                        type="number"
+                        min="0"
+                        value={jobForm.nextServiceOdometer}
+                        onChange={(e) => setJobForm({ ...jobForm, nextServiceOdometer: e.target.value })}
+                        placeholder="e.g. 50000"
+                        className="w-full bg-white border border-slate-300 rounded px-2.5 py-1.5 font-mono text-slate-800 outline-none focus:ring-1 focus:ring-blue-500"
                       />
                     </div>
                   </div>
@@ -5646,7 +6045,7 @@ export default function ServiceCenterApp() {
                         <th className="py-2.5 px-3">Service Name</th>
                         <th className="py-2.5 px-3">Category</th>
                         <th className="py-2.5 px-3 text-right">Labor Fee (LKR)</th>
-                        <th className="py-2.5 px-3 text-center">Duration</th>
+                        <th className="py-2.5 px-3 text-center">Next Odometer (KM)</th>
                         <th className="py-2.5 px-3 text-center">Checklist</th>
                         <th className="py-2.5 px-3 text-center">Actions</th>
                       </tr>
@@ -5689,7 +6088,7 @@ export default function ServiceCenterApp() {
                               {Number(j.standardLaborFee).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                             </td>
                             <td className="py-2.5 px-3 text-center font-mono text-slate-600">
-                              {j.estimatedDuration || '-'}
+                              {j.nextServiceOdometer ? `${Number(j.nextServiceOdometer).toLocaleString()} KM` : '-'}
                             </td>
                             <td className="py-2.5 px-3 text-center">
                               <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded text-[10px] font-bold">
@@ -5764,7 +6163,7 @@ export default function ServiceCenterApp() {
                     }`}
                 >
                   <TrendingUp className="w-4 h-4" />
-                  Expenses (Revenue & Due Today)
+                  Daily Operating Expenses
                 </button>
 
                 <button
@@ -5799,7 +6198,7 @@ export default function ServiceCenterApp() {
                     }`}
                 >
                   <Layers className="w-4 h-4" />
-                  Expen/Group (Analysis)
+                  Expense/Revenue Summary
                 </button>
               </div>
 
@@ -5817,100 +6216,6 @@ export default function ServiceCenterApp() {
             {/* Sub-View 1: Expenses (Revenue & Due Today - Operating Expenses Tracker) */}
             {expenseSubTab === 'expenses' && (
               <div className="space-y-6">
-
-                {/* Top Financial KPI Summary Cards - 100% Dynamic from Database */}
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                  {/* Total Revenue */}
-                  <div className="bg-gradient-to-br from-emerald-900 to-slate-900 text-white rounded-xl p-5 border border-emerald-700/50 shadow-sm relative overflow-hidden">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-xs font-bold text-emerald-300 uppercase tracking-wider flex items-center gap-1.5">
-                        <TrendingUp className="w-4 h-4 text-emerald-400" />
-                        Total Revenue (Earned)
-                      </span>
-                      <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded font-mono font-bold">
-                        Services
-                      </span>
-                    </div>
-                    <div className="text-2xl font-black font-mono tracking-tight text-white mb-1">
-                      LKR {Number(financials.totalRevenue || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                    </div>
-                    <div className="text-[11px] text-emerald-200/80 flex items-center justify-between pt-2 border-t border-emerald-800/60">
-                      <span>Today: <strong className="text-white font-mono">LKR {Number(financials.revenueToday || 0).toLocaleString()}</strong></span>
-                      <span>This Month: <strong className="text-white font-mono">LKR {Number(financials.revenueThisMonth || 0).toLocaleString()}</strong></span>
-                    </div>
-                  </div>
-
-                  {/* Total Expenses Paid */}
-                  <div className="bg-white text-slate-800 rounded-xl p-5 border border-slate-200 shadow-sm">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
-                        <CheckCircle2 className="w-4 h-4 text-blue-600" />
-                        Total Expenses Settled
-                      </span>
-                      <span className="text-[10px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded font-mono font-bold">
-                        Cleared
-                      </span>
-                    </div>
-                    <div className="text-2xl font-black font-mono tracking-tight text-slate-900 mb-1">
-                      LKR {Number(financials.totalExpensesPaid || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                    </div>
-                    <div className="text-[11px] text-slate-500 pt-2 border-t border-slate-100 flex justify-between">
-                      <span>Settled Today:</span>
-                      <span className="font-mono font-bold text-slate-800">LKR {Number(financials.expensesPaidToday || 0).toLocaleString()}</span>
-                    </div>
-                  </div>
-
-                  {/* Expenses Should Pay Today (Quick Navigation Card) */}
-                  <div
-                    onClick={() => {
-                      setActiveTab('Expenses');
-                      setExpenseSubTab('pay_today');
-                    }}
-                    className={`rounded-xl p-5 border shadow-sm relative overflow-hidden transition-all cursor-pointer ${(financials.expensesShouldPayToday || 0) > 0
-                      ? 'bg-gradient-to-br from-rose-950 to-slate-900 text-white border-rose-600/60 ring-1 ring-rose-500/40 hover:border-rose-400'
-                      : 'bg-white text-slate-800 border-slate-200 hover:border-slate-300'
-                      }`}
-                    title="Click to jump to Pay Today view"
-                  >
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-xs font-bold text-rose-400 uppercase tracking-wider flex items-center gap-1.5">
-                        <AlertTriangle className={`w-4 h-4 ${(financials.expensesShouldPayToday || 0) > 0 ? 'text-rose-400 animate-pulse' : 'text-slate-400'}`} />
-                        Should Pay Today
-                      </span>
-                      <span className="text-[10px] bg-rose-600 text-white px-2 py-0.5 rounded font-bold uppercase flex items-center gap-1">
-                        Pay Today <ArrowRight className="w-2.5 h-2.5" />
-                      </span>
-                    </div>
-                    <div className={`text-2xl font-black font-mono tracking-tight mb-1 ${(financials.expensesShouldPayToday || 0) > 0 ? 'text-rose-200' : 'text-slate-900'}`}>
-                      LKR {Number(financials.expensesShouldPayToday || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                    </div>
-                    <div className="text-[11px] text-rose-300/80 pt-2 border-t border-rose-900/60 flex justify-between">
-                      <span>Supplier Bills Requiring Attention</span>
-                      <span className="font-bold">{financials.paymentsRequiringAttentionToday?.length || 0} Bills</span>
-                    </div>
-                  </div>
-
-                  {/* Net Operating Profit / Cashflow */}
-                  <div className="bg-white text-slate-800 rounded-xl p-5 border border-slate-200 shadow-sm">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
-                        <DollarSign className="w-4 h-4 text-indigo-600" />
-                        Net Cashflow / Profit
-                      </span>
-                      <span className={`text-[10px] px-2 py-0.5 rounded font-bold uppercase ${(financials.netOperatingProfit || 0) >= 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
-                        }`}>
-                        {(financials.netOperatingProfit || 0) >= 0 ? 'Positive' : 'Deficit / Credit'}
-                      </span>
-                    </div>
-                    <div className={`text-2xl font-black font-mono tracking-tight mb-1 ${(financials.netOperatingProfit || 0) >= 0 ? 'text-emerald-600' : 'text-rose-600'
-                      }`}>
-                      LKR {Number(financials.netOperatingProfit || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                    </div>
-                    <div className="text-[11px] text-slate-500 pt-2 border-t border-slate-100 flex justify-between">
-                      <span>Formula: Total Revenue - Total Paid</span>
-                    </div>
-                  </div>
-                </div>
 
                 {/* Prompt Alert Banner if bills need payment today */}
                 {(financials.expensesShouldPayToday || 0) > 0 && (
@@ -6075,7 +6380,19 @@ export default function ServiceCenterApp() {
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                        <div>
+                          <label className="block font-bold text-slate-700 mb-1">Txn Type</label>
+                          <select
+                            value={newExpenseData.txnType || 'Expense'}
+                            onChange={(e) => setNewExpenseData({ ...newExpenseData, txnType: e.target.value })}
+                            className="w-full bg-white border border-slate-300 rounded px-2 py-1.5 text-slate-800 outline-none font-semibold"
+                          >
+                            {['Expense', 'Cash Out', 'Advance', 'Petty Cash', 'Salary / Wage', 'Bank Deposit / Transfer', 'Refund', 'Other'].map(t => (
+                              <option key={t} value={t}>{t}</option>
+                            ))}
+                          </select>
+                        </div>
                         <div>
                           <label className="block font-bold text-slate-700 mb-1">Payment Method</label>
                           <select
@@ -6136,6 +6453,7 @@ export default function ServiceCenterApp() {
                                 amount: '',
                                 expenseDate: new Date().toISOString().split('T')[0],
                                 dueDate: new Date().toISOString().split('T')[0],
+                                txnType: 'Expense',
                                 paymentMethod: 'Cash',
                                 status: 'Should Pay Today',
                                 notes: ''
@@ -6192,6 +6510,7 @@ export default function ServiceCenterApp() {
                         <thead>
                           <tr className="bg-slate-100 text-slate-700 font-bold uppercase text-[10px]">
                             <th className="py-2 px-3">Date</th>
+                            <th className="py-2 px-3">Txn Type</th>
                             <th className="py-2 px-3">Category</th>
                             <th className="py-2 px-3">Description</th>
                             <th className="py-2 px-3">Other / Payee</th>
@@ -6209,6 +6528,11 @@ export default function ServiceCenterApp() {
                             .map((exp) => (
                               <tr key={exp.id || exp._id} className="hover:bg-slate-50">
                                 <td className="py-2 px-3 font-mono text-slate-600">{exp.expenseDate}</td>
+                                <td className="py-2 px-3">
+                                  <span className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded text-[10px] font-bold">
+                                    {exp.txnType || 'Expense'}
+                                  </span>
+                                </td>
                                 <td className="py-2 px-3">
                                   <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded text-[10px] font-bold">
                                     {exp.category}
@@ -6285,6 +6609,7 @@ export default function ServiceCenterApp() {
                       <thead>
                         <tr className="bg-slate-900 text-white font-bold uppercase text-[10px] tracking-wider">
                           <th className="py-2.5 px-3">Date</th>
+                          <th className="py-2.5 px-3">Txn Type</th>
                           <th className="py-2.5 px-3">Worker Name</th>
                           <th className="py-2.5 px-3">Category</th>
                           <th className="py-2.5 px-3">Description</th>
@@ -6316,6 +6641,11 @@ export default function ServiceCenterApp() {
                           return workerExpenses.map((exp) => (
                             <tr key={exp.id || exp._id} className="hover:bg-slate-50">
                               <td className="py-2.5 px-3 font-mono text-slate-600">{exp.expenseDate}</td>
+                              <td className="py-2.5 px-3">
+                                <span className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded text-[10px] font-bold">
+                                  {exp.txnType || 'Expense'}
+                                </span>
+                              </td>
                               <td className="py-2.5 px-3 font-bold text-indigo-700">{exp.payee || '-'}</td>
                               <td className="py-2.5 px-3">
                                 <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded text-[10px] font-bold">
@@ -7249,49 +7579,163 @@ export default function ServiceCenterApp() {
                       </td>
                     </tr>
                   ) : (
-                    catalogItems.map((item, itemIdx) => (
-                      <tr key={item.id || item._id || `${item.itemCode}-${itemIdx}`} className="hover:bg-slate-50 transition">
-                        <td className="py-2.5 px-3 font-mono font-bold text-blue-700">{item.itemCode}</td>
-                        <td className="py-2.5 px-3 font-mono text-slate-500">{item.barcode || '-'}</td>
-                        <td className="py-2.5 px-3 font-bold text-slate-900">{item.description}</td>
-                        <td className="py-2.5 px-3">
-                          <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded text-[10px] font-semibold">
-                            {item.category}
-                          </span>
-                        </td>
-                        <td className="py-2.5 px-3 text-center font-mono font-bold text-slate-800">
-                          {item.qtyOnHand}
-                        </td>
-                        <td className="py-2.5 px-3 text-right font-mono text-slate-600">
-                          {Number(item.costPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                        </td>
-                        <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-900">
-                          {Number(item.sellingPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                        </td>
-                        <td className="py-2.5 px-3 text-center">
-                          <div className="flex items-center justify-center gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => handleEditItem(item)}
-                              className="bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold px-2 py-1 rounded text-xs transition flex items-center gap-1 cursor-pointer"
-                              title="Edit Item"
-                            >
-                              <Edit3 className="w-3 h-3" />
-                              Edit
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteItem(item.id || item._id || item.itemCode, item.description)}
-                              className="bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold px-2 py-1 rounded text-xs transition flex items-center gap-1 cursor-pointer"
-                              title="Delete Item"
-                            >
-                              <Trash2 className="w-3 h-3" />
-                              Delete
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))
+                    catalogItems.map((item, itemIdx) => {
+                      const rowKey = item.id || item._id || item.itemCode;
+                      const isRowEditing = editingItemRowId === rowKey;
+                      if (isRowEditing) {
+                        return (
+                          <tr key={`${rowKey}-${itemIdx}`} className="bg-amber-50/70">
+                            <td className="p-1.5">
+                              <input
+                                type="text"
+                                value={editingItemRowData.itemCode}
+                                onChange={(e) => setEditingItemRowData({ ...editingItemRowData, itemCode: e.target.value.toUpperCase() })}
+                                className="w-24 bg-white border border-slate-300 rounded px-1.5 py-1 font-mono text-[11px] font-bold"
+                              />
+                            </td>
+                            <td className="p-1.5">
+                              <input
+                                type="text"
+                                value={editingItemRowData.barcode}
+                                onChange={(e) => setEditingItemRowData({ ...editingItemRowData, barcode: e.target.value })}
+                                className="w-24 bg-white border border-slate-300 rounded px-1.5 py-1 font-mono text-[11px]"
+                              />
+                            </td>
+                            <td className="p-1.5">
+                              <input
+                                type="text"
+                                value={editingItemRowData.description}
+                                onChange={(e) => setEditingItemRowData({ ...editingItemRowData, description: e.target.value })}
+                                className="w-full min-w-[140px] bg-white border border-slate-300 rounded px-1.5 py-1 text-[11px] font-semibold"
+                              />
+                            </td>
+                            <td className="p-1.5">
+                              <select
+                                value={editingItemRowData.category}
+                                onChange={(e) => setEditingItemRowData({ ...editingItemRowData, category: e.target.value })}
+                                className="bg-white border border-slate-300 rounded px-1.5 py-1 text-[11px]"
+                              >
+                                <option value="Oils & Fluids">Oils & Fluids</option>
+                                <option value="Filters">Filters</option>
+                                <option value="Brake Components">Brake Components</option>
+                                <option value="Batteries">Batteries</option>
+                                <option value="Engine Parts">Engine Parts</option>
+                                <option value="Accessories">Accessories</option>
+                                <option value="General">General</option>
+                              </select>
+                            </td>
+                            <td className="p-1.5">
+                              <div className="flex items-center gap-1">
+                                <input
+                                  type="number"
+                                  min="0"
+                                  value={editingItemRowData.qtyOnHand}
+                                  onChange={(e) => setEditingItemRowData({ ...editingItemRowData, qtyOnHand: e.target.value })}
+                                  className="w-16 bg-white border border-slate-300 rounded px-1.5 py-1 font-mono text-[11px] text-center font-bold"
+                                />
+                                <select
+                                  value={editingItemRowData.stockUnit}
+                                  onChange={(e) => setEditingItemRowData({ ...editingItemRowData, stockUnit: e.target.value })}
+                                  className="bg-white border border-slate-300 rounded px-1 py-1 text-[10px]"
+                                >
+                                  <option value="Bottles">Bottles</option>
+                                  <option value="Barrels">Barrels</option>
+                                  <option value="Liters (L)">Liters (L)</option>
+                                  <option value="Milliliters (ml)">Milliliters (ml)</option>
+                                  <option value="Pieces">Pieces</option>
+                                  <option value="Packs">Packs</option>
+                                  <option value="Cans">Cans</option>
+                                  <option value="Kg">Kg</option>
+                                  <option value="Meters">Meters</option>
+                                  <option value="Units">Units</option>
+                                </select>
+                              </div>
+                            </td>
+                            <td className="p-1.5">
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={editingItemRowData.costPrice}
+                                onChange={(e) => setEditingItemRowData({ ...editingItemRowData, costPrice: e.target.value })}
+                                className="w-20 bg-white border border-slate-300 rounded px-1.5 py-1 font-mono text-[11px] text-right"
+                              />
+                            </td>
+                            <td className="p-1.5">
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={editingItemRowData.sellingPrice}
+                                onChange={(e) => setEditingItemRowData({ ...editingItemRowData, sellingPrice: e.target.value })}
+                                className="w-20 bg-white border border-slate-300 rounded px-1.5 py-1 font-mono text-[11px] text-right font-bold"
+                              />
+                            </td>
+                            <td className="p-1.5 text-center">
+                              <div className="flex items-center justify-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => handleSaveInlineItemEdit(rowKey)}
+                                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-2 py-1 rounded text-[11px] cursor-pointer"
+                                >
+                                  Save
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={handleCancelInlineItemEdit}
+                                  className="bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold px-2 py-1 rounded text-[11px] cursor-pointer"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      }
+                      return (
+                        <tr key={`${rowKey}-${itemIdx}`} className="hover:bg-slate-50 transition">
+                          <td className="py-2.5 px-3 font-mono font-bold text-blue-700">{item.itemCode}</td>
+                          <td className="py-2.5 px-3 font-mono text-slate-500">{item.barcode || '-'}</td>
+                          <td className="py-2.5 px-3 font-bold text-slate-900">{item.description}</td>
+                          <td className="py-2.5 px-3">
+                            <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded text-[10px] font-semibold">
+                              {item.category}
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3 text-center font-mono font-bold text-slate-800">
+                            {item.qtyOnHand} {item.stockUnit || ''}
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-mono text-slate-600">
+                            {Number(item.costPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-900">
+                            {Number(item.sellingPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </td>
+                          <td className="py-2.5 px-3 text-center">
+                            <div className="flex items-center justify-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => handleStartInlineItemEdit(item)}
+                                className="bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold px-2 py-1 rounded text-xs transition flex items-center gap-1 cursor-pointer"
+                                title="Edit Item"
+                              >
+                                <Edit3 className="w-3 h-3" />
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteItem(item.id || item._id || item.itemCode, item.description)}
+                                className="bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold px-2 py-1 rounded text-xs transition flex items-center gap-1 cursor-pointer"
+                                title="Delete Item"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                                Delete
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>
@@ -7497,7 +7941,7 @@ export default function ServiceCenterApp() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block font-bold text-slate-700 mb-1">Payment Amount (LKR) *</label>
                   <input
@@ -7522,7 +7966,7 @@ export default function ServiceCenterApp() {
 
               <div>
                 <label className="block font-bold text-slate-700 mb-1">Payment Method</label>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   {['Cheque', 'Cash', 'Bank Transfer'].map(m => (
                     <button
                       type="button"
@@ -7540,7 +7984,7 @@ export default function ServiceCenterApp() {
               </div>
 
               {paymentFormData.method === 'Cheque' && (
-                <div className="grid grid-cols-2 gap-3 bg-blue-50/50 p-3 rounded-lg border border-blue-100">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-blue-50/50 p-3 rounded-lg border border-blue-100">
                   <div>
                     <label className="block font-bold text-slate-700 mb-1">Cheque Number</label>
                     <input
